@@ -41,3 +41,6 @@ next-env.d.ts
 /outputs/
 /work/
 /.deploy/
+/cpanel-package/
+/kalameh-office-cpanel.zip
+*.tsbuildinfo
