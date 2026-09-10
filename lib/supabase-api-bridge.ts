@@ -94,6 +94,11 @@ export function installSupabaseApiBridge() {
         const result = await invokeOfficeApi({ action: "user_create", ...payload });
         return jsonResponse(result.payload, result.status >= 400 ? result.status : 201);
       }
+      if (route === "/auth/users" && method === "PATCH") {
+        const payload = JSON.parse(String(init?.body || "{}"));
+        const result = await invokeOfficeApi({ action: "user_update", ...payload });
+        return jsonResponse(result.payload, result.status);
+      }
       if (route === "/auth/users" && method === "DELETE") {
         const payload = JSON.parse(String(init?.body || "{}"));
         const result = await invokeOfficeApi({ action: "user_delete", ...payload });
