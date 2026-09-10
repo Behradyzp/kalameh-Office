@@ -63,7 +63,7 @@ revoke all on public.audit_logs from anon, authenticated;
 
 insert into public.workspace_state (id, data) values (
   'main',
-  '{"tasks":[],"personalTasks":[],"notifications":[],"transactions":[],"clients":[],"leads":[],"contracts":[],"projects":[],"members":[],"chats":[],"letters":[],"attendance":[],"leaves":[],"logs":[],"events":[],"preferences":{"fontScale":1,"theme":"blue","labels":{"tasks":["سئو","فنی","طراحی","گزارش","عمومی"],"clients":["سئو سایت","طراحی سایت","گرافیک","تولید محتوا"],"leads":["سئو سایت","طراحی سایت","کمپین تبلیغاتی","شبکه‌های اجتماعی"]}}}'::jsonb
+  '{"tasks":[],"personalTasks":[],"notifications":[],"transactions":[],"clients":[],"leads":[],"contracts":[],"projects":[],"members":[],"chats":[],"letters":[],"attendance":[],"leaves":[],"logs":[],"events":[],"preferences":{"fontScale":1,"theme":"blue","labels":{"tasks":["سئو","فنی","طراحی","گزارش","عمومی"],"clients":["سئو سایت","طراحی سایت","پشتیبانی سایت","گرافیک","تولید محتوا"],"leads":["سئو سایت","طراحی سایت","کمپین تبلیغاتی","شبکه‌های اجتماعی"]}}}'::jsonb
 ) on conflict (id) do nothing;
 
 insert into storage.buckets (id, name, public, file_size_limit)
