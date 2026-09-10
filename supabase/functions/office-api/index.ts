@@ -10,9 +10,14 @@ const respond = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json; charset=utf-8" } });
 
 const permissionKeys: Record<string, string[]> = {
-  "پروژه‌ها": ["projects"], "وظایف": ["tasks", "personalTasks"], "مالی": ["transactions"],
-  "مشتریان": ["clients"], "لیدها": ["leads"], "قراردادها": ["contracts"], "اعضای تیم": [],
-  "پیام‌ها": ["chats"], "نامه‌ها": ["letters"], "تقویم": ["events"], "تنظیمات": ["preferences"],
+  "پروژه‌ها": ["projects"], "مشاهده پروژه‌ها": ["projects"], "افزودن پروژه": ["projects"], "ویرایش پروژه": ["projects"], "حذف پروژه": ["projects"],
+  "وظایف": ["tasks", "personalTasks"], "مشاهده تسک‌ها": ["tasks"], "افزودن تسک": ["tasks"], "ویرایش تسک": ["tasks"], "حذف تسک": ["tasks"], "تغییر وضعیت تسک": ["tasks"],
+  "مالی": ["transactions"], "مشاهده مالی": ["transactions"], "مدیریت مالی": ["transactions"],
+  "مشتریان": ["clients"], "مشاهده مشتریان": ["clients"], "افزودن مشتری": ["clients"], "ویرایش مشتری": ["clients"], "حذف مشتری": ["clients"],
+  "لیدها": ["leads"], "مشاهده لیدها": ["leads"], "افزودن لید": ["leads"], "ویرایش لید": ["leads"], "حذف لید": ["leads"],
+  "قراردادها": ["contracts"], "مشاهده قراردادها": ["contracts"], "مدیریت قراردادها": ["contracts"], "اعضای تیم": [],
+  "پیام‌ها": ["chats"], "ارسال پیام": ["chats"], "نامه‌ها": ["letters"], "مشاهده نامه‌ها": ["letters"], "ایجاد نامه": ["letters"],
+  "تقویم": ["events"], "مشاهده تقویم": ["events"], "مدیریت تقویم": ["events"], "گزارش‌ها": [], "تنظیمات": ["preferences"],
 };
 
 const allowedKeys = (data: Record<string, unknown>, email: string, admin: boolean) => {
@@ -24,6 +29,38 @@ const allowedKeys = (data: Record<string, unknown>, email: string, admin: boolea
     for (const key of permissionKeys[String(permission)] || []) allowed.add(key);
   }
   return allowed;
+};
+
+const requiredMutationPermission = (key: string, currentValue: unknown, nextValue: unknown) => {
+  const current = (Array.isArray(currentValue) ? currentValue : []) as Record<string, unknown>[];
+  const next = (Array.isArray(nextValue) ? nextValue : []) as Record<string, unknown>[];
+  if (key === "transactions") return "مدیریت مالی";
+  const labels: Record<string, [string, string, string]> = {
+    projects: ["افزودن پروژه", "ویرایش پروژه", "حذف پروژه"],
+    clients: ["افزودن مشتری", "ویرایش مشتری", "حذف مشتری"],
+    tasks: ["افزودن تسک", "ویرایش تسک", "حذف تسک"],
+    leads: ["افزودن لید", "ویرایش لید", "حذف لید"],
+    contracts: ["مدیریت قراردادها", "مدیریت قراردادها", "مدیریت قراردادها"],
+    events: ["مدیریت تقویم", "مدیریت تقویم", "مدیریت تقویم"],
+    chats: ["ارسال پیام", "ارسال پیام", "ارسال پیام"],
+    letters: ["ایجاد نامه", "ایجاد نامه", "ایجاد نامه"],
+  };
+  if (!labels[key]) return null;
+  const currentById = new Map(current.map((item) => [String(item.id), item]));
+  const nextById = new Map(next.map((item) => [String(item.id), item]));
+  if (next.some((item) => !currentById.has(String(item.id)))) return labels[key][0];
+  if (current.some((item) => !nextById.has(String(item.id)))) return labels[key][2];
+  for (const item of next) {
+    const before = currentById.get(String(item.id));
+    if (before && JSON.stringify(before) !== JSON.stringify(item)) {
+      if (key === "tasks") {
+        const withoutStatus = (value: Record<string, unknown>) => { const copy = { ...value }; delete copy.status; delete copy.archivedAt; delete copy.progress; return copy; };
+        if (JSON.stringify(withoutStatus(before)) === JSON.stringify(withoutStatus(item))) return "تغییر وضعیت تسک";
+      }
+      return labels[key][1];
+    }
+  }
+  return null;
 };
 
 const filterWorkspace = (data: Record<string, unknown>, email: string, admin: boolean) => {
@@ -47,11 +84,30 @@ const filterWorkspace = (data: Record<string, unknown>, email: string, admin: bo
         ? candidate : { ...candidate, permissions: [] });
     } else if (key === "projects") result[key] = allowed.has(key) ? visibleProjects : [];
     else if (key === "tasks") result[key] = allowed.has(key) ? tasks : [];
+    else if (key === "personalTasks") result[key] = ((Array.isArray(value) ? value : []) as Record<string, unknown>[])
+      .filter((task) => task.ownerId === memberId);
+    else if (key === "attendance") result[key] = ((Array.isArray(value) ? value : []) as Record<string, unknown>[])
+      .filter((entry) => entry.memberId === memberId);
     else if (key === "leaves") result[key] = ((Array.isArray(value) ? value : []) as Record<string, unknown>[])
       .filter((leave) => leave.memberId === memberId);
     else if (!allowed.has(key)) result[key] = Array.isArray(value) ? [] : value;
   }
   return result;
+};
+
+const syncAuthMembers = async (admin: ReturnType<typeof createClient>, data: Record<string, unknown>) => {
+  const { data: profiles, error } = await admin.from("profiles").select("email,name,role,active,last_seen_at").order("created_at");
+  if (error) throw error;
+  const existing = (Array.isArray(data.members) ? data.members : []) as Record<string, unknown>[];
+  let nextId = existing.reduce((max, member) => Math.max(max, Number(member.id) || 0), 0) + 1;
+  const merged = [...existing];
+  for (const profile of profiles || []) {
+    const index = merged.findIndex((member) => String(member.email || "").toLowerCase() === String(profile.email || "").toLowerCase());
+    const base = index >= 0 ? merged[index] : { id: nextId++, permissions: profile.role === "admin" ? ["همه بخش‌ها"] : ["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "پیام‌ها"] };
+    const member = { ...base, name: profile.name, email: profile.email, role: profile.role === "admin" ? "مدیر کل" : String(base.role || "عضو تیم"), status: profile.active ? "فعال" : "غیرفعال", lastSeen: profile.last_seen_at ? new Date(profile.last_seen_at).getTime() : undefined };
+    if (index >= 0) merged[index] = member; else merged.push(member);
+  }
+  return { ...data, members: merged };
 };
 
 const stripSignedUrls = (value: unknown): unknown => {
@@ -110,12 +166,16 @@ Deno.serve(async (request) => {
     const body = await request.json() as Record<string, unknown>;
     const action = String(body.action || "");
     const isAdmin = profile.role === "admin";
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    await admin.from("audit_logs").delete().lt("created_at", threeDaysAgo);
 
     if (action === "session") return respond({ user: profile });
     if (action === "workspace_get") {
       const { data: row, error } = await admin.from("workspace_state").select("data").eq("id", "main").single();
       if (error) throw error;
-      const visible = filterWorkspace(row.data || {}, profile.email, isAdmin);
+      const synced = await syncAuthMembers(admin, row.data || {});
+      if (JSON.stringify(synced.members) !== JSON.stringify((row.data || {}).members)) await admin.from("workspace_state").update({ data: synced, updated_at: new Date().toISOString() }).eq("id", "main");
+      const visible = filterWorkspace(synced, profile.email, isAdmin);
       return respond({ data: await hydrateSignedUrls(admin, visible) });
     }
     if (action === "workspace_save") {
@@ -131,13 +191,31 @@ Deno.serve(async (request) => {
         const members = (Array.isArray(current.members) ? current.members : []) as Record<string, unknown>[];
         const member = members.find((candidate) => String(candidate.email || "").toLowerCase() === profile.email.toLowerCase());
         const memberId = member?.id;
+        const permissions = new Set((Array.isArray(member?.permissions) ? member.permissions : []).map(String));
         for (const [key, value] of Object.entries(submitted)) {
           if (!allowed.has(key)) continue;
-          if (key !== "leaves") {
+          if (key !== "leaves" && key !== "personalTasks" && key !== "attendance") {
+            const required = requiredMutationPermission(key, current[key], value);
+            const legacyPermission = ({ projects:"پروژه‌ها", tasks:"وظایف", clients:"مشتریان", transactions:"مالی", leads:"لیدها", contracts:"قراردادها", events:"تقویم", chats:"پیام‌ها", letters:"نامه‌ها" } as Record<string,string>)[key] || "";
+            if (required && !permissions.has(required) && !permissions.has(legacyPermission)) return respond({ error: `دسترسی «${required}» برای این حساب فعال نیست.` }, 403);
             next[key] = stripSignedUrls(value);
             continue;
           }
           if (memberId === undefined) return respond({ error: "پروفایل عضو در فضای کاری پیدا نشد." }, 403);
+          if (key === "personalTasks") {
+            const existingTasks = (Array.isArray(current.personalTasks) ? current.personalTasks : []) as Record<string, unknown>[];
+            const others = existingTasks.filter((task) => task.ownerId !== memberId);
+            const own = ((Array.isArray(value) ? value : []) as Record<string, unknown>[]).map((task) => ({ ...stripSignedUrls(task) as Record<string, unknown>, ownerId: memberId }));
+            next.personalTasks = [...others, ...own];
+            continue;
+          }
+          if (key === "attendance") {
+            const existingAttendance = (Array.isArray(current.attendance) ? current.attendance : []) as Record<string, unknown>[];
+            const others = existingAttendance.filter((entry) => entry.memberId !== memberId);
+            const own = ((Array.isArray(value) ? value : []) as Record<string, unknown>[]).filter((entry) => entry.memberId === memberId);
+            next.attendance = [...others, ...own];
+            continue;
+          }
           const existing = (Array.isArray(current.leaves) ? current.leaves : []) as Record<string, unknown>[];
           const incoming = (Array.isArray(value) ? value : []) as Record<string, unknown>[];
           const others = existing.filter((leave) => leave.memberId !== memberId);
@@ -162,6 +240,21 @@ Deno.serve(async (request) => {
       await admin.from("audit_logs").insert({ user_id: profile.id, action: "workspace_updated" });
       return respond({ ok: true });
     }
+    if (action === "file_upload") {
+      const fileName = String(body.fileName || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
+      const mimeType = String(body.mimeType || "application/octet-stream");
+      const encoded = String(body.base64 || "");
+      if (!encoded) return respond({ error: "فایل دریافت نشد." }, 400);
+      const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+      if (bytes.byteLength > 20 * 1024 * 1024) return respond({ error: "حداکثر حجم فایل ۲۰ مگابایت است." }, 413);
+      const extension = fileName.includes(".") ? `.${fileName.split(".").pop()}` : "";
+      const path = `${profile.id}/${crypto.randomUUID()}${extension}`;
+      const { error: uploadError } = await admin.storage.from("office-files").upload(path, bytes, { contentType: mimeType, upsert: false });
+      if (uploadError) throw uploadError;
+      const { data: signed, error: signedError } = await admin.storage.from("office-files").createSignedUrl(path, 3600);
+      if (signedError) throw signedError;
+      return respond({ name: fileName, type: mimeType, url: signed.signedUrl, storagePath: path }, 201);
+    }
     if (action === "user_create") {
       if (!isAdmin) return respond({ error: "فقط مدیر کل به این بخش دسترسی دارد." }, 403);
       const email = String(body.email || "").trim().toLowerCase();
@@ -172,6 +265,11 @@ Deno.serve(async (request) => {
       const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name }, app_metadata: { role } });
       if (error) return respond({ error: error.message }, 409);
       await admin.from("profiles").update({ name, role, active: true }).eq("id", data.user.id);
+      const { data: workspaceRow } = await admin.from("workspace_state").select("data").eq("id", "main").single();
+      if (workspaceRow?.data) {
+        const synced = await syncAuthMembers(admin, workspaceRow.data);
+        await admin.from("workspace_state").update({ data: synced, updated_at: new Date().toISOString() }).eq("id", "main");
+      }
       await admin.from("audit_logs").insert({ user_id: profile.id, action: "user_created", metadata: { created_user_id: data.user.id, email } });
       return respond({ user: { id: data.user.id, email, name, role } }, 201);
     }
