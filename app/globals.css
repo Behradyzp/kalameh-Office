@@ -3960,6 +3960,20 @@ select {
 .tag-add button {
   padding-inline: 10px;
 }
+.dashboard-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.dashboard-mini-list { padding: 18px; }
+.dashboard-mini-list > header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.dashboard-mini-list > header > svg { width: 20px; color: var(--primary); }
+.dashboard-mini-list h2 { margin: 0 0 2px; font-size: .95rem; }
+.dashboard-mini-list header span, .dashboard-mini-list p { color: #84929a; font-size: .75rem; }
+.dashboard-mini-list > div { display: grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); font-size: .76rem; }
+.dashboard-mini-list time { color: #8a969e; font-size: .7rem; }
+@media (max-width: 900px) { .dashboard-activity-grid { grid-template-columns: 1fr; } }
 
 /* Team cards and profile upload */
 .team-grid {
