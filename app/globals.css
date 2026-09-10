@@ -3927,6 +3927,21 @@ select {
   padding: 5px 9px;
   font-size: 0.74rem;
 }
+.editable-tags input {
+  width: clamp(72px, 9vw, 130px);
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+.editable-tags input:focus {
+  background: #fff;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 24%, transparent);
+  border-radius: 8px;
+}
 .editable-tags button {
   border: 0;
   background: transparent;
