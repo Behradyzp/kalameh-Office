@@ -46,7 +46,13 @@ async function uploadFile(body: FormData) {
     contentType: file.type || "application/octet-stream",
     upsert: false,
   });
-  if (error) return errorResponse(error.message || "بارگذاری فایل انجام نشد.", 503);
+  if (error) {
+    const buffer = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let index = 0; index < buffer.length; index += 0x8000) binary += String.fromCharCode(...buffer.subarray(index, index + 0x8000));
+    const fallback = await invokeOfficeApi({ action: "file_upload", fileName: file.name, mimeType: file.type, base64: btoa(binary) });
+    return jsonResponse(fallback.payload, fallback.status >= 400 ? fallback.status : 201);
+  }
   const { data: signed, error: signedError } = await supabase.storage.from("office-files").createSignedUrl(path, 3600);
   if (signedError) return errorResponse("ساخت لینک امن فایل انجام نشد.", 503);
   return jsonResponse({ name: file.name, type: file.type || "application/octet-stream", url: signed.signedUrl, storagePath: path }, 201);
@@ -74,7 +80,7 @@ export function installSupabaseApiBridge() {
       if (route === "/auth/login" && method === "POST") {
         const credentials = JSON.parse(String(init?.body || "{}"));
         const { data, error } = await supabase.auth.signInWithPassword({ email: credentials.email, password: credentials.password });
-        if (error || !data.user) return errorResponse("ایمیل یا رمز عبور صحیح نیست.", 401);
+        if (error || !data.user) return errorResponse(error?.message || "ایمیل یا رمز عبور صحیح نیست.", 401);
         const result = await invokeOfficeApi({ action: "session" });
         if (result.status >= 400) return jsonResponse(result.payload, result.status);
         return jsonResponse({ user: result.payload?.user || userShape(data.user) });
