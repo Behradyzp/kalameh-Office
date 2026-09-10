@@ -41,10 +41,18 @@ jobs:
             echo "::error::Access Token معتبر نیست یا به پروژه Supabase دسترسی ندارد. یک توکن تازه از همان حساب پروژه بسازید."
             exit 1
           fi
-      - name: Link Supabase project
-        run: supabase link --project-ref khcvfklaafyuzafunwtf --password "$SUPABASE_DB_PASSWORD"
       - name: Apply database migration
-        run: supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PGSSLMODE: require
+        run: |
+          psql \
+            --host=aws-0-ap-southeast-2.pooler.supabase.com \
+            --port=5432 \
+            --username=postgres.khcvfklaafyuzafunwtf \
+            --dbname=postgres \
+            --set=ON_ERROR_STOP=1 \
+            --file=supabase/migrations/202609100001_kalameh_office.sql
       - name: Deploy secure API function
         run: supabase functions deploy office-api --project-ref khcvfklaafyuzafunwtf
 
