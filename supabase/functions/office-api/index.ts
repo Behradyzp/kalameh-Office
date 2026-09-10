@@ -47,6 +47,8 @@ const filterWorkspace = (data: Record<string, unknown>, email: string, admin: bo
         ? candidate : { ...candidate, permissions: [] });
     } else if (key === "projects") result[key] = allowed.has(key) ? visibleProjects : [];
     else if (key === "tasks") result[key] = allowed.has(key) ? tasks : [];
+    else if (key === "leaves") result[key] = ((Array.isArray(value) ? value : []) as Record<string, unknown>[])
+      .filter((leave) => leave.memberId === memberId);
     else if (!allowed.has(key)) result[key] = Array.isArray(value) ? [] : value;
   }
   return result;
@@ -126,7 +128,34 @@ Deno.serve(async (request) => {
       if (!isAdmin) {
         const allowed = allowedKeys(current, profile.email, false);
         next = { ...current };
-        for (const [key, value] of Object.entries(submitted)) if (allowed.has(key)) next[key] = stripSignedUrls(value);
+        const members = (Array.isArray(current.members) ? current.members : []) as Record<string, unknown>[];
+        const member = members.find((candidate) => String(candidate.email || "").toLowerCase() === profile.email.toLowerCase());
+        const memberId = member?.id;
+        for (const [key, value] of Object.entries(submitted)) {
+          if (!allowed.has(key)) continue;
+          if (key !== "leaves") {
+            next[key] = stripSignedUrls(value);
+            continue;
+          }
+          if (memberId === undefined) return respond({ error: "پروفایل عضو در فضای کاری پیدا نشد." }, 403);
+          const existing = (Array.isArray(current.leaves) ? current.leaves : []) as Record<string, unknown>[];
+          const incoming = (Array.isArray(value) ? value : []) as Record<string, unknown>[];
+          const others = existing.filter((leave) => leave.memberId !== memberId);
+          const ownExisting = new Map(existing.filter((leave) => leave.memberId === memberId).map((leave) => [String(leave.id), leave]));
+          const protectedIds = new Set(others.map((leave) => String(leave.id)));
+          const own = incoming.filter((leave) => leave.memberId === memberId && !protectedIds.has(String(leave.id))).map((leave) => {
+            const previous = ownExisting.get(String(leave.id));
+            return {
+              id: leave.id,
+              memberId,
+              from: String(leave.from || ""),
+              to: String(leave.to || ""),
+              reason: String(leave.reason || ""),
+              status: previous?.status || "در انتظار",
+            };
+          });
+          next.leaves = [...others, ...own];
+        }
       }
       const { error: saveError } = await admin.from("workspace_state").update({ data: next, updated_at: new Date().toISOString() }).eq("id", "main");
       if (saveError) throw saveError;
