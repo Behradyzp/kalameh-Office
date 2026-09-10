@@ -26,9 +26,27 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
-      - run: supabase db push --include-all
-      - run: supabase functions deploy office-api --project-ref "$SUPABASE_PROJECT_ID"
+      - name: Validate Supabase credentials
+        shell: bash
+        run: |
+          if [[ -z "$SUPABASE_ACCESS_TOKEN" || "$SUPABASE_ACCESS_TOKEN" != sbp_* ]]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN ثبت نشده یا فرمت آن نادرست است؛ توکن باید با sbp_ شروع شود."
+            exit 1
+          fi
+          if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
+            echo "::error::SUPABASE_DB_PASSWORD ثبت نشده است."
+            exit 1
+          fi
+          if ! supabase projects list --output json >/dev/null; then
+            echo "::error::Access Token معتبر نیست یا به پروژه Supabase دسترسی ندارد. یک توکن تازه از همان حساب پروژه بسازید."
+            exit 1
+          fi
+      - name: Link Supabase project
+        run: supabase link --project-ref khcvfklaafyuzafunwtf --password "$SUPABASE_DB_PASSWORD"
+      - name: Apply database migration
+        run: supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
+      - name: Deploy secure API function
+        run: supabase functions deploy office-api --project-ref khcvfklaafyuzafunwtf
 
   pages:
     runs-on: ubuntu-latest
