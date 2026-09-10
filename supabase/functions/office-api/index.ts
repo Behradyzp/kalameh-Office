@@ -52,6 +52,44 @@ const filterWorkspace = (data: Record<string, unknown>, email: string, admin: bo
   return result;
 };
 
+const stripSignedUrls = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stripSignedUrls);
+  if (!value || typeof value !== "object") return value;
+  const source = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(source)) {
+    if (key === "url" && typeof source.storagePath === "string") continue;
+    result[key] = stripSignedUrls(item);
+  }
+  return result;
+};
+
+const hydrateSignedUrls = async (admin: ReturnType<typeof createClient>, value: unknown) => {
+  const paths = new Set<string>();
+  const collect = (item: unknown) => {
+    if (Array.isArray(item)) return item.forEach(collect);
+    if (!item || typeof item !== "object") return;
+    const object = item as Record<string, unknown>;
+    if (typeof object.storagePath === "string") paths.add(object.storagePath);
+    Object.values(object).forEach(collect);
+  };
+  collect(value);
+  if (!paths.size) return value;
+  const ordered = Array.from(paths);
+  const { data } = await admin.storage.from("office-files").createSignedUrls(ordered, 3600);
+  const urls = new Map((data || []).map((item, index) => [ordered[index], item.signedUrl]));
+  const hydrate = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(hydrate);
+    if (!item || typeof item !== "object") return item;
+    const object = item as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(object)) next[key] = hydrate(child);
+    if (typeof object.storagePath === "string") next.url = urls.get(object.storagePath) || "";
+    return next;
+  };
+  return hydrate(value);
+};
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (request.method !== "POST") return respond({ error: "Method not allowed" }, 405);
@@ -75,7 +113,8 @@ Deno.serve(async (request) => {
     if (action === "workspace_get") {
       const { data: row, error } = await admin.from("workspace_state").select("data").eq("id", "main").single();
       if (error) throw error;
-      return respond({ data: filterWorkspace(row.data || {}, profile.email, isAdmin) });
+      const visible = filterWorkspace(row.data || {}, profile.email, isAdmin);
+      return respond({ data: await hydrateSignedUrls(admin, visible) });
     }
     if (action === "workspace_save") {
       if (!body.data || typeof body.data !== "object") return respond({ error: "اطلاعات نامعتبر است." }, 400);
@@ -83,11 +122,11 @@ Deno.serve(async (request) => {
       if (error) throw error;
       const current = (row.data || {}) as Record<string, unknown>;
       const submitted = body.data as Record<string, unknown>;
-      let next = submitted;
+      let next = stripSignedUrls(submitted) as Record<string, unknown>;
       if (!isAdmin) {
         const allowed = allowedKeys(current, profile.email, false);
         next = { ...current };
-        for (const [key, value] of Object.entries(submitted)) if (allowed.has(key)) next[key] = value;
+        for (const [key, value] of Object.entries(submitted)) if (allowed.has(key)) next[key] = stripSignedUrls(value);
       }
       const { error: saveError } = await admin.from("workspace_state").update({ data: next, updated_at: new Date().toISOString() }).eq("id", "main");
       if (saveError) throw saveError;
@@ -125,4 +164,3 @@ Deno.serve(async (request) => {
     return respond({ error: error instanceof Error ? error.message : "خطای سرویس" }, 500);
   }
 });
-
