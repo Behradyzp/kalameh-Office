@@ -1274,7 +1274,8 @@ export default function Home() {
                 leaves={data.leaves}
                 logs={data.logs}
                 currentMemberId={currentMember?.id || 0}
-                onAdd={() => openCreate("member")}
+                onAdd={() => {setSelectedMember(null);openCreate("member")}}
+                onEdit={(m)=>{setSelectedMember(m);setDialog("member")}}
                 onAccess={(m) => {
                   setSelectedMember(m);
                   setDialog("access");
@@ -1518,13 +1519,19 @@ export default function Home() {
       <MemberDialogV2
         open={dialog === "member"}
         close={() => setDialog(null)}
+        member={selectedMember}
         save={async(m,password) => {
-          const response=await fetch("api/auth/users",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:m.name,email:m.email,role:m.role,password})});
+          const editingMember=selectedMember;
+          const response=await fetch("api/auth/users",{method:editingMember?"PATCH":"POST",headers:{"content-type":"application/json"},body:JSON.stringify({currentEmail:editingMember?.email,name:m.name,email:m.email,role:m.role,password,active:m.status==="فعال"})});
           const result=await response.json() as {error?:string};
-          if(!response.ok){toast.error(result.error||"ساخت حساب انجام نشد");return false}
-          patch("members", [m, ...data.members]);
+          if(!response.ok){toast.error(result.error||(editingMember?"ویرایش حساب انجام نشد":"ساخت حساب انجام نشد"));return false}
+          if(editingMember){
+            patch("members",data.members.map(x=>x.id===editingMember.id?m:x),`اطلاعات عضو «${editingMember.name}» را ویرایش کرد`);
+            if(editingMember.name!==m.name)patch("tasks",data.tasks.map(task=>task.assignee===editingMember.name?{...task,assignee:m.name}:task),`نام مسئول تسک‌ها را به «${m.name}» تغییر داد`);
+          }else patch("members", [m, ...data.members]);
+          setSelectedMember(null);
           setDialog(null);
-          toast.success("همکار جدید ثبت شد");
+          toast.success(editingMember?"اطلاعات همکار ذخیره شد":"همکار جدید ثبت شد");
           return true;
         }}
       />
@@ -3996,6 +4003,7 @@ function TeamPro({
   logs,
   currentMemberId,
   onAdd,
+  onEdit,
   onAccess,
   onDelete,
   onCheckIn,
@@ -4010,6 +4018,7 @@ function TeamPro({
   logs: AuditLog[];
   currentMemberId: number;
   onAdd: () => void;
+  onEdit: (m: Member) => void;
   onAccess: (m: Member) => void;
   onDelete: (id: number) => void;
   onCheckIn: () => void;
@@ -4072,6 +4081,9 @@ function TeamPro({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => onEdit(m)}>
+                        <Edit3 /> ویرایش اطلاعات عضو
+                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => onAccess(m)}>
                         <ShieldCheck /> شخصی‌سازی دسترسی
                       </DropdownMenuItem>
@@ -6788,14 +6800,17 @@ function LeadDialogV2({
 function MemberDialogV2({
   open,
   close,
+  member,
   save,
 }: {
   open: boolean;
   close: () => void;
+  member: Member | null;
   save: (m: Member, password: string) => Promise<boolean>;
 }) {
   const [avatar, setAvatar] = useState<Attachment | null>(null),
     [uploading, setUploading] = useState(false);
+  useEffect(()=>setAvatar(member?.avatar||null),[member,open]);
   const upload = async (file: File) => {
     setUploading(true);
     const body = new FormData();
@@ -6811,19 +6826,19 @@ function MemberDialogV2({
     <Modal
       open={open}
       close={close}
-      title="ثبت همکار جدید"
-      description="اطلاعات همکار، نقش و تصویر پروفایل را تعریف کنید."
-      submit="ثبت همکار"
+      title={member?"ویرایش اطلاعات همکار":"ثبت همکار جدید"}
+      description={member?"نام، ایمیل ورود، نقش، وضعیت و تصویر پروفایل را ویرایش کنید.":"اطلاعات همکار، نقش و تصویر پروفایل را تعریف کنید."}
+      submit={member?"ذخیره تغییرات":"ثبت همکار"}
       onSubmit={async(e) => {
         e.preventDefault();
         const d = fd(e);
         const saved=await save({
-          id: Date.now(),
+          id: member?.id||Date.now(),
           name: d.name,
           email: d.email,
           role: d.role,
-          status: "فعال",
-          permissions: ["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "ارسال پیام"],
+          status: d.status as Member["status"],
+          permissions: member?.permissions||["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "ارسال پیام"],
           avatar: avatar || undefined,
         },d.password);
         if(saved)setAvatar(null);
@@ -6852,17 +6867,20 @@ function MemberDialogV2({
         />
       </label>
       <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" required />
-        <Field label="ایمیل ورود" name="email" type="email" required />
-        <Field label="رمز عبور اولیه" name="password" type="password" required />
+        <Field label="نام و نام خانوادگی" name="name" defaultValue={member?.name} required />
+        <Field label="ایمیل ورود" name="email" type="email" defaultValue={member?.email} required />
+        <Field label={member?"رمز جدید (اختیاری)":"رمز عبور اولیه"} name="password" type="password" required={!member} />
         <Field label="نقش سازمانی" name="role">
-          <select name="role">
+          <select name="role" defaultValue={member?.role}>
             <option>کارشناس سئو</option>
             <option>توسعه‌دهنده</option>
             <option>طراح</option>
             <option>مدیر پروژه</option>
             <option>حسابدار</option>
           </select>
+        </Field>
+        <Field label="وضعیت حساب" name="status">
+          <select name="status" defaultValue={member?.status||"فعال"}><option>فعال</option><option>غیرفعال</option></select>
         </Field>
       </div>
     </Modal>
