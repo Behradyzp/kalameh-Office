@@ -654,10 +654,40 @@ const nav = [
 ] as const;
 const money = (n: number) =>
   `${new Intl.NumberFormat("fa-IR").format(n)} تومان`;
+const TEHRAN_TIME_ZONE = "Asia/Tehran";
+const latinDigits = (value: string) =>
+  value.replace(/[۰-۹]/g, (digit) =>
+    String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)),
+  );
+const jalaliDateParts = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    timeZone: TEHRAN_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || "";
+  return { year: get("year"), month: get("month"), day: get("day") };
+};
+const todayJalali = () => {
+  const { year, month, day } = jalaliDateParts();
+  return `${year}/${month}/${day}`;
+};
+const currentJalaliMonth = () => todayJalali().slice(0, 7);
+const currentJalaliLongDate = () =>
+  new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    timeZone: TEHRAN_TIME_ZONE,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(new Date());
 const now = () =>
   new Intl.DateTimeFormat("fa-IR", {
+    timeZone: TEHRAN_TIME_ZONE,
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   }).format(new Date());
 const initials = (name: string) =>
   name
@@ -879,7 +909,7 @@ export default function Home() {
               status,
               progress: status === "done" ? 100 : t.progress,
               archivedAt: ["done", "cancelled"].includes(status)
-                ? "۱۴۰۵/۰۶/۱۷"
+                ? todayJalali()
                 : undefined,
             }
           : t,
@@ -936,7 +966,7 @@ export default function Home() {
   const visibleProjects=data.projects.filter(p=>isAdmin||!p.ownerId||p.ownerId===currentMember?.id||(p.memberIds||[]).includes(currentMember?.id));
   const visibleProjectNames=new Set(visibleProjects.map(p=>p.title));
   const visibleTasks=data.tasks.filter(t=>visibleProjectNames.has(t.project)&&(isAdmin||t.assignee===currentMember?.name||visibleProjects.some(p=>p.title===t.project&&(p.memberIds||[]).includes(currentMember?.id))));
-  const today="۱۴۰۵/۰۶/۱۷",overdueTasks=visibleTasks.filter(t=>!["done","cancelled"].includes(t.status)&&(t.endDate||t.due)>=today?false:true);
+  const today=todayJalali(),overdueTasks=visibleTasks.filter(t=>!["done","cancelled"].includes(t.status)&&(t.endDate||t.due)>=today?false:true);
   return (
     <div
       dir="rtl"
@@ -1157,7 +1187,7 @@ export default function Home() {
                 }}
                   onDelete={deleteTask}
                   personalTasks={data.personalTasks}
-                  onPersonalToggle={id=>patch("personalTasks",data.personalTasks.map(t=>t.id===id?{...t,status:t.status==="done"?"active":"done",archivedAt:t.status==="done"?undefined:"۱۴۰۵/۰۶/۱۷"}:t),"وضعیت تسک شخصی را تغییر داد")}
+                  onPersonalToggle={id=>patch("personalTasks",data.personalTasks.map(t=>t.id===id?{...t,status:t.status==="done"?"active":"done",archivedAt:t.status==="done"?undefined:todayJalali()}:t),"وضعیت تسک شخصی را تغییر داد")}
                   onToggleSubtask={(taskId,subtaskId)=>patch("tasks",data.tasks.map(t=>{if(t.id!==taskId)return t;const subtasks=t.subtasks?.map(s=>s.id===subtaskId?{...s,done:!s.done}:s);const allDone=Boolean(subtasks?.length&&subtasks.every(s=>s.done));return {...t,subtasks,status:allDone?"done":t.status==="done"?"backlog":t.status,archivedAt:allDone?today:undefined}}),"زیرتسک را تغییر داد")}
                 dragged={dragged}
                 setDragged={setDragged}
@@ -1265,7 +1295,7 @@ export default function Home() {
                       {
                         id: Date.now(),
                         memberId: currentMember?.id || 1,
-                        date: "۱۴۰۵/۰۶/۱۷",
+                        date: todayJalali(),
                         checkIn: now(),
                       },
                       ...data.attendance,
@@ -1571,7 +1601,7 @@ export default function Home() {
           setDialog("task");
         }}
         onMove={moveTask}
-        onToggleSubtask={(taskId, subtaskId) => patch("tasks", data.tasks.map(t=>{if(t.id!==taskId)return t;const subtasks=t.subtasks?.map(s=>s.id===subtaskId?{...s,done:!s.done}:s);const allDone=Boolean(subtasks?.length&&subtasks.every(s=>s.done));return {...t,subtasks,status:allDone?"done":t.status==="done"?"backlog":t.status,progress:allDone?100:0,archivedAt:allDone?"۱۴۰۵/۰۶/۱۷":undefined}}), "وضعیت یک زیرتسک را تغییر داد")}
+        onToggleSubtask={(taskId, subtaskId) => patch("tasks", data.tasks.map(t=>{if(t.id!==taskId)return t;const subtasks=t.subtasks?.map(s=>s.id===subtaskId?{...s,done:!s.done}:s);const allDone=Boolean(subtasks?.length&&subtasks.every(s=>s.done));return {...t,subtasks,status:allDone?"done":t.status==="done"?"backlog":t.status,progress:allDone?100:0,archivedAt:allDone?todayJalali():undefined}}), "وضعیت یک زیرتسک را تغییر داد")}
         onUpdateTask={updated=>patch("tasks",data.tasks.map(t=>t.id===updated.id?updated:t),"دیدگاه یا فایل تسک را به‌روزرسانی کرد")}
         onUpdateProject={updated=>{patch("projects",data.projects.map(p=>p.id===updated.id?updated:p),"فایل پروژه را به‌روزرسانی کرد");setSelectedProject(updated)}}
       />
@@ -1604,7 +1634,7 @@ export default function Home() {
   );
 }
 
-function CalendarCenter({tasks,events,projects,onSave}:{tasks:Task[];events:CalendarEvent[];projects:Project[];onSave:(event:CalendarEvent)=>void}){const [open,setOpen]=useState(false);const days=Array.from({length:31},(_,i)=>i+1);const dayKey=(day:number)=>`۱۴۰۵/۰۶/${faDigits(String(day).padStart(2,"0"))}`;return <><PageTitle title="تقویم یکپارچه" subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"><Button onClick={()=>setOpen(true)}><Plus/> رویداد جدید</Button></PageTitle><div className="calendar-toolbar"><button><ChevronDown/> شهریور ۱۴۰۵</button><div><span className="task-dot"/> ددلاین تسک <span className="meeting-dot"/> جلسه و رویداد</div></div><section className="agency-calendar"><header>{["شنبه","یکشنبه","دوشنبه","سه‌شنبه","چهارشنبه","پنجشنبه","جمعه"].map(x=><span key={x}>{x}</span>)}</header><div>{days.map(day=>{const key=dayKey(day),dayTasks=tasks.filter(t=>(t.endDate||t.due)===key),dayEvents=events.filter(e=>e.date===key);return <article key={day} className={day===17?"today":""}><b>{faDigits(String(day))}</b>{dayEvents.slice(0,2).map(e=><span className="calendar-event meeting" key={e.id}>{e.time} {e.title}</span>)}{dayTasks.slice(0,2).map(t=><span className="calendar-event task" key={t.id}>{t.title}</span>)}{dayTasks.length+dayEvents.length>4&&<small>+{faDigits(String(dayTasks.length+dayEvents.length-4))} مورد</small>}</article>})}</div></section><Modal open={open} close={()=>setOpen(false)} title="افزودن رویداد تقویم" description="جلسه، ددلاین یا یادآوری جدید را در تقویم شمسی ثبت کنید." submit="ثبت در تقویم" onSubmit={e=>{e.preventDefault();const d=fd(e);onSave({id:Date.now(),title:d.title,date:d.date,time:d.time,type:d.type as CalendarEvent['type'],project:d.project});setOpen(false)}}><div className="form-grid"><Field label="عنوان رویداد" name="title" wide required/><Field label="تاریخ شمسی" name="date" defaultValue="۱۴۰۵/۰۶/۱۷"/><Field label="ساعت" name="time" defaultValue="۱۰:۰۰"/><Field label="نوع رویداد" name="type"><select name="type"><option>جلسه</option><option>ددلاین</option><option>یادآوری</option></select></Field><Field label="پروژه" name="project"><select name="project"><option value="">بدون پروژه</option>{projects.map(p=><option key={p.id}>{p.title}</option>)}</select></Field></div></Modal></>}
+function CalendarCenter({tasks,events,projects,onSave}:{tasks:Task[];events:CalendarEvent[];projects:Project[];onSave:(event:CalendarEvent)=>void}){const [open,setOpen]=useState(false),currentMonth=currentJalaliMonth(),{month,day}=jalaliDateParts(),numericMonth=Number(latinDigits(month)),numericDay=Number(latinDigits(day)),days=Array.from({length:numericMonth<=6?31:numericMonth<=11?30:29},(_,i)=>i+1),dayKey=(value:number)=>`${currentMonth}/${faDigits(String(value).padStart(2,"0"))}`;return <><PageTitle title="تقویم یکپارچه" subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"><Button onClick={()=>setOpen(true)}><Plus/> رویداد جدید</Button></PageTitle><div className="calendar-toolbar"><button><ChevronDown/> {monthTitle(currentMonth)}</button><div><span className="task-dot"/> ددلاین تسک <span className="meeting-dot"/> جلسه و رویداد</div></div><section className="agency-calendar"><header>{["شنبه","یکشنبه","دوشنبه","سه‌شنبه","چهارشنبه","پنجشنبه","جمعه"].map(x=><span key={x}>{x}</span>)}</header><div>{days.map(value=>{const key=dayKey(value),dayTasks=tasks.filter(t=>(t.endDate||t.due)===key),dayEvents=events.filter(e=>e.date===key);return <article key={value} className={value===numericDay?"today":""}><b>{faDigits(String(value))}</b>{dayEvents.slice(0,2).map(e=><span className="calendar-event meeting" key={e.id}>{e.time} {e.title}</span>)}{dayTasks.slice(0,2).map(t=><span className="calendar-event task" key={t.id}>{t.title}</span>)}{dayTasks.length+dayEvents.length>4&&<small>+{faDigits(String(dayTasks.length+dayEvents.length-4))} مورد</small>}</article>})}</div></section><Modal open={open} close={()=>setOpen(false)} title="افزودن رویداد تقویم" description="جلسه، ددلاین یا یادآوری جدید را در تقویم شمسی ثبت کنید." submit="ثبت در تقویم" onSubmit={e=>{e.preventDefault();const d=fd(e);onSave({id:Date.now(),title:d.title,date:d.date,time:d.time,type:d.type as CalendarEvent["type"],project:d.project});setOpen(false)}}><div className="form-grid"><Field label="عنوان رویداد" name="title" wide required/><Field label="تاریخ شمسی" name="date" defaultValue={todayJalali()}/><Field label="ساعت" name="time" defaultValue="۱۰:۰۰"/><Field label="نوع رویداد" name="type"><select name="type"><option>جلسه</option><option>ددلاین</option><option>یادآوری</option></select></Field><Field label="پروژه" name="project"><select name="project"><option value="">بدون پروژه</option>{projects.map(p=><option key={p.id}>{p.title}</option>)}</select></Field></div></Modal></>}
 
 function ReportsCenter({data}:{data:Workspace}){const [section,setSection]=useState("projects");const done=data.tasks.filter(t=>t.status==="done"),active=data.tasks.filter(t=>!["done","cancelled"].includes(t.status));return <><PageTitle title="مرکز گزارش‌گیری" subtitle="گزارش یکپارچه مشتریان، پروژه‌ها، تسک‌ها، تیم و امور مالی"><Button variant="outline" onClick={()=>downloadWorkspaceReport(section,data)}><Download/> خروجی گزارش</Button></PageTitle><div className="report-tabs">{[["projects","پروژه‌ها"],["clients","مشتریان"],["tasks","وظایف"],["team","اعضا"],["finance","مالی"]].map(([id,title])=><button className={section===id?"active":""} onClick={()=>setSection(id)} key={id}>{title}</button>)}</div><section className="report-kpis"><article><FolderKanban/><span><strong>{faDigits(String(data.projects.length))}</strong><small>پروژه قابل مشاهده</small></span></article><article><CheckCircle2/><span><strong>{faDigits(String(done.length))}</strong><small>تسک تکمیل‌شده</small></span></article><article><Clock3/><span><strong>{faDigits(String(active.length))}</strong><small>تسک در جریان</small></span></article><article><Users/><span><strong>{faDigits(String(data.clients.length))}</strong><small>مشتری ثبت‌شده</small></span></article></section><section className="panel report-table">{section==="projects"&&data.projects.map(p=><div key={p.id}><strong>{p.title}</strong><span>{p.client||"پروژه آزاد"}</span><span>{data.tasks.filter(t=>t.project===p.title&&t.status==="done").length} انجام‌شده</span><span>{data.tasks.filter(t=>t.project===p.title&&!['done','cancelled'].includes(t.status)).length} باز</span></div>)}{section==="clients"&&data.clients.map(c=><div key={c.id}><strong>{c.name}</strong><span>{c.company}</span><span>{c.service}</span><span>{data.projects.filter(p=>p.client===c.company).length} پروژه</span></div>)}{section==="tasks"&&done.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{t.assignee}</span><span>{t.archivedAt||t.endDate}</span></div>)}{section==="team"&&data.members.map(m=><div key={m.id}><strong>{m.name}</strong><span>{m.role}</span><span>{data.tasks.filter(t=>t.assignee===m.name&&t.status==="done").length} تکمیل‌شده</span><span>{data.attendance.filter(a=>a.memberId===m.id).length} روز حضور</span></div>)}{section==="finance"&&data.transactions.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{money(t.amount)}</span><span>{t.status==="paid"?"پرداخت‌شده":"باز"}</span></div>)}</section></>}
 
@@ -1774,7 +1804,7 @@ function Dashboard({
           <div className="panel-head">
             <div>
               <h2>جریان مالی</h2>
-              <span>شهریور ۱۴۰۵</span>
+              <span>{monthTitle(currentJalaliMonth())}</span>
             </div>
           </div>
           <div className="finance-mini">
@@ -2874,7 +2904,7 @@ function FinanceDialog({
         <Field
           label="تاریخ شمسی"
           name="date"
-          defaultValue={row?.date || "۱۴۰۵/۰۶/۱۷"}
+          defaultValue={row?.date || todayJalali()}
         />
         <Field label="وضعیت" name="status">
           <select name="status" defaultValue={row?.status || "pending"}>
@@ -3102,7 +3132,7 @@ function LetterDialog({
           from: "مدیر نمونه",
           to: d.to,
           body: d.body,
-          date: "۱۴۰۵/۰۶/۱۷",
+          date: todayJalali(),
           status: "جدید",
         });
       }}
@@ -3478,7 +3508,7 @@ function ContractDialog({
             ))}
           </select>
         </Field>
-        <Field label="تاریخ شمسی" name="date" defaultValue="۱۴۰۵/۰۶/۱۷" />
+        <Field label="تاریخ شمسی" name="date" defaultValue={todayJalali()} />
         <Field label="وضعیت" name="status">
           <select name="status">
             <option>فعال</option>
@@ -4207,7 +4237,7 @@ function TeamPro({
           </section>
         </TabsContent>
       </Tabs>
-      <Dialog open={Boolean(reportMember)} onOpenChange={v=>!v&&setReportMember(null)}><DialogContent className="member-report-dialog"><DialogHeader><DialogTitle>گزارش عملکرد {reportMember?.name}</DialogTitle><DialogDescription>شهریور ۱۴۰۵ · گزارش اختصاصی مدیر کل</DialogDescription></DialogHeader>{reportMember&&<div className="member-report-kpis"><span><strong>{tasks.filter(t=>t.assignee===reportMember.name&&t.status==="done").length}</strong><small>تسک تکمیل‌شده</small></span><span><strong>{tasks.filter(t=>t.assignee===reportMember.name&&!['done','cancelled'].includes(t.status)).length}</strong><small>تسک باز</small></span><span><strong>{attendance.filter(a=>a.memberId===reportMember.id).length}</strong><small>روز حضور</small></span><span><strong>{leaves.filter(l=>l.memberId===reportMember.id&&l.status==="تأیید شده").length}</strong><small>مرخصی تأییدشده</small></span></div>}</DialogContent></Dialog>
+      <Dialog open={Boolean(reportMember)} onOpenChange={v=>!v&&setReportMember(null)}><DialogContent className="member-report-dialog"><DialogHeader><DialogTitle>گزارش عملکرد {reportMember?.name}</DialogTitle><DialogDescription>{monthTitle(currentJalaliMonth())} · گزارش اختصاصی مدیر کل</DialogDescription></DialogHeader>{reportMember&&<div className="member-report-kpis"><span><strong>{tasks.filter(t=>t.assignee===reportMember.name&&t.status==="done").length}</strong><small>تسک تکمیل‌شده</small></span><span><strong>{tasks.filter(t=>t.assignee===reportMember.name&&!['done','cancelled'].includes(t.status)).length}</strong><small>تسک باز</small></span><span><strong>{attendance.filter(a=>a.memberId===reportMember.id).length}</strong><small>روز حضور</small></span><span><strong>{leaves.filter(l=>l.memberId===reportMember.id&&l.status==="تأیید شده").length}</strong><small>مرخصی تأییدشده</small></span></div>}</DialogContent></Dialog>
       <Modal
         open={leaveOpen}
         close={() => setLeaveOpen(false)}
@@ -4232,13 +4262,13 @@ function TeamPro({
           <Field
             label="از تاریخ"
             name="from"
-            defaultValue="۱۴۰۵/۰۶/۲۰"
+            defaultValue={todayJalali()}
             required
           />
           <Field
             label="تا تاریخ"
             name="to"
-            defaultValue="۱۴۰۵/۰۶/۲۰"
+            defaultValue={todayJalali()}
             required
           />
           <label className="wide">
@@ -5810,7 +5840,7 @@ function ProjectPanelV3({
   onUpdateProject:(project:Project)=>void;
 }) {
   const [draggedTask, setDraggedTask] = useState<number | null>(null),[detailTask,setDetailTask]=useState<number|null>(null),
-    [archiveMonth, setArchiveMonth] = useState("۱۴۰۵/۰۶");
+    [archiveMonth, setArchiveMonth] = useState(currentJalaliMonth());
   if (!project) return null;
   const list = tasks.filter((t) => t.project === project.title),
     labels = { ...defaultBoardLabels, ...project.boardLabels },
@@ -5822,7 +5852,7 @@ function ProjectPanelV3({
     allArchived = list.filter((t) => ["done", "cancelled"].includes(t.status)),
     archiveKey = (t: Task) => {
       const value = t.archivedAt || t.endDate || t.due;
-      return /^.{4}\/.{2}/.test(value) ? value.slice(0, 7) : "۱۴۰۵/۰۶";
+      return /^.{4}\/.{2}/.test(value) ? value.slice(0, 7) : currentJalaliMonth();
     },
     archiveMonths = Array.from(new Set(allArchived.map(archiveKey)))
       .sort()
@@ -5989,7 +6019,7 @@ function ProjectPanelV3({
                     </article>
                   </div>
                   <ArchiveMonthPicker
-                    months={archiveMonths.length ? archiveMonths : ["۱۴۰۵/۰۶"]}
+                    months={archiveMonths.length ? archiveMonths : [currentJalaliMonth()]}
                     value={archiveMonth}
                     onChange={setArchiveMonth}
                   />
@@ -6105,14 +6135,14 @@ function DashboardV2({
 }) {
   const openTasks = data.tasks
       .filter((t) => !["done", "cancelled"].includes(t.status))
-      .slice(0, 4),personalToday=data.personalTasks.filter(t=>t.status==="active"&&t.date==="۱۴۰۵/۰۶/۱۷").slice(0,3),
+      .slice(0, 4),personalToday=data.personalTasks.filter(t=>t.status==="active"&&t.date===todayJalali()).slice(0,3),
     balance = totals.income - totals.expense,
     max = Math.max(totals.income, totals.expense, totals.receivable, 1);
   return (
     <>
       <div className="dashboard-welcome">
         <div>
-          <span>دوشنبه، ۱۷ شهریور</span>
+          <span>{currentJalaliLongDate()}</span>
           <h1>سلام، روز بخیر 👋</h1>
           <p>
             امروز {faDigits(String(openTasks.length))} کار مهم برای پیگیری داری.
@@ -6213,7 +6243,7 @@ function DashboardV2({
           <header>
             <div>
               <h2>خلاصه مالی</h2>
-              <span>شهریور ۱۴۰۵</span>
+              <span>{monthTitle(currentJalaliMonth())}</span>
             </div>
             <button onClick={() => setView("finance")}>
               گزارش کامل <ArrowLeft />
@@ -6854,7 +6884,7 @@ function PersonalTasksPanel({
   save: (tasks: PersonalTask[]) => void;
 }) {
   const [title, setTitle] = useState(""),
-    [date, setDate] = useState("۱۴۰۵/۰۶/۱۷"),
+    [date, setDate] = useState(todayJalali()),
     [repeat, setRepeat] = useState<PersonalTask["repeat"]>("بدون تکرار");
   const active = tasks.filter((t) => t.status === "active"),
     archived = tasks.filter((t) => t.status !== "active");
@@ -7019,7 +7049,7 @@ function FinanceV2({
   const months = Array.from(new Set(rows.map((r) => r.date.slice(0, 7))))
       .sort()
       .reverse(),
-    [month, setMonth] = useState(months[0] || "۱۴۰۵/۰۶");
+    [month, setMonth] = useState(months[0] || currentJalaliMonth());
   const filtered = rows.filter((r) => r.date.startsWith(month));
   const income = filtered
       .filter(
@@ -7292,7 +7322,7 @@ function TaskDialogV3({
             <CalendarDays />
             <input
               name="startDate"
-              defaultValue={task?.startDate || "۱۴۰۵/۰۶/۱۷"}
+              defaultValue={task?.startDate || todayJalali()}
               inputMode="numeric"
               placeholder="۱۴۰۵/۰۶/۱۷"
               required
@@ -7305,7 +7335,7 @@ function TaskDialogV3({
             <CalendarDays />
             <input
               name="endDate"
-              defaultValue={task?.endDate || task?.due || "۱۴۰۵/۰۶/۲۵"}
+              defaultValue={task?.endDate || task?.due || todayJalali()}
               inputMode="numeric"
               placeholder="۱۴۰۵/۰۶/۲۵"
               required
@@ -7454,7 +7484,7 @@ function TaskDialogV4({
             <CalendarDays />
             <input
               name="startDate"
-              defaultValue={task?.startDate || "۱۴۰۵/۰۶/۱۷"}
+              defaultValue={task?.startDate || todayJalali()}
               inputMode="numeric"
               placeholder="۱۴۰۵/۰۶/۱۷"
               required
@@ -7467,7 +7497,7 @@ function TaskDialogV4({
             <CalendarDays />
             <input
               name="endDate"
-              defaultValue={task?.endDate || task?.due || "۱۴۰۵/۰۶/۲۵"}
+              defaultValue={task?.endDate || task?.due || todayJalali()}
               inputMode="numeric"
               placeholder="۱۴۰۵/۰۶/۲۵"
               required
@@ -7877,7 +7907,7 @@ function LeaveCenter({
               <CalendarDays />
               <input
                 name="from"
-                defaultValue="۱۴۰۵/۰۶/۲۰"
+                defaultValue={todayJalali()}
                 inputMode="numeric"
                 required
               />
@@ -7889,7 +7919,7 @@ function LeaveCenter({
               <CalendarDays />
               <input
                 name="to"
-                defaultValue="۱۴۰۵/۰۶/۲۰"
+                defaultValue={todayJalali()}
                 inputMode="numeric"
                 required
               />
@@ -8033,9 +8063,9 @@ function PersonalTasksPanelV2({
   save: (tasks: PersonalTask[]) => void;
 }) {
   const [title, setTitle] = useState(""),
-    [date, setDate] = useState("۱۴۰۵/۰۶/۱۷"),
+    [date, setDate] = useState(todayJalali()),
     [repeat, setRepeat] = useState<PersonalTask["repeat"]>("بدون تکرار"),
-    [archiveMonth, setArchiveMonth] = useState("۱۴۰۵/۰۶");
+    [archiveMonth, setArchiveMonth] = useState(currentJalaliMonth());
   const active = tasks.filter((t) => t.status === "active"),
     allArchived = tasks.filter((t) => t.status !== "active"),
     key = (t: PersonalTask) => (t.archivedAt || t.date).slice(0, 7),
@@ -8059,7 +8089,7 @@ function PersonalTasksPanelV2({
           ? {
               ...t,
               status: value,
-              archivedAt: value === "active" ? undefined : "۱۴۰۵/۰۶/۱۷",
+              archivedAt: value === "active" ? undefined : todayJalali(),
             }
           : t,
       ),
@@ -8159,7 +8189,7 @@ function PersonalTasksPanelV2({
           </TabsContent>
           <TabsContent value="archive">
             <ArchiveMonthPicker
-              months={months.length ? months : ["۱۴۰۵/۰۶"]}
+              months={months.length ? months : [currentJalaliMonth()]}
               value={archiveMonth}
               onChange={setArchiveMonth}
             />
