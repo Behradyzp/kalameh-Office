@@ -996,7 +996,15 @@ export default function Home() {
     setChatFile(await response.json());
     toast.success("فایل آماده ارسال است");
   };
-  const currentMember=data.members.find(m=>m.email.toLowerCase()===currentEmail.toLowerCase())||data.members[0],isAdmin=authUser?.role==="admin";
+  const matchedMember=data.members.find(m=>m.email.toLowerCase()===currentEmail.toLowerCase());
+  const currentMember=matchedMember||{
+    id:data.members.reduce((max,member)=>Math.max(max,member.id),0)+1,
+    name:authUser?.name||currentEmail.split("@")[0]||"کاربر",
+    email:currentEmail||authUser?.email||"",
+    role:authUser?.role==="admin"?"مدیر کل":"عضو تیم",
+    status:"فعال" as const,
+    permissions:authUser?.role==="admin"?["همه بخش‌ها"]:[],
+  },isAdmin=authUser?.role==="admin";
   const viewPermission:Partial<Record<View,string>>={projects:"پروژه‌ها",tasks:"وظایف",finance:"مالی",clients:"مشتریان",leads:"لیدها",contracts:"قراردادها",team:"اعضای تیم",messages:"پیام‌ها",letters:"نامه‌ها",calendar:"تقویم",settings:"تنظیمات"};
   const hasPermission=(...permissions:string[])=>isAdmin||permissions.some((permission)=>currentMember?.permissions.includes(permission))||currentMember?.permissions.includes("همه بخش‌ها");
   const canView=(next:View)=>isAdmin||["dashboard","leaves"].includes(next)||(viewPermission[next]&&currentMember?.permissions.includes(viewPermission[next]!))||(next==="projects"&&hasPermission("مشاهده پروژه‌ها","افزودن پروژه","ویرایش پروژه","حذف پروژه"))||(next==="tasks"&&hasPermission("مشاهده تسک‌ها","افزودن تسک","ویرایش تسک","حذف تسک","تغییر وضعیت تسک"))||(next==="clients"&&hasPermission("مشاهده مشتریان","افزودن مشتری","ویرایش مشتری","حذف مشتری"))||(next==="finance"&&hasPermission("مشاهده مالی","مدیریت مالی"))||(next==="leads"&&hasPermission("مشاهده لیدها","افزودن لید","ویرایش لید","حذف لید"))||(next==="contracts"&&hasPermission("مشاهده قراردادها","مدیریت قراردادها"))||(next==="messages"&&hasPermission("ارسال پیام"))||(next==="letters"&&hasPermission("مشاهده نامه‌ها","ایجاد نامه"))||(next==="calendar"&&hasPermission("مشاهده تقویم","مدیریت تقویم"))||(next==="reports"&&hasPermission("گزارش‌ها"));
@@ -1098,9 +1106,7 @@ export default function Home() {
           <SidebarFooter className="sidebar-footer">
             <button className="user-card" onClick={() => setView("settings")}>
               <Avatar className="avatar avatar-main">
-                <AvatarImage
-                  src={data.members.find((m) => m.id === 1)?.avatar?.url}
-                />
+                <AvatarImage src={currentMember.avatar?.url} />
                 <AvatarFallback>ب‌ی</AvatarFallback>
               </Avatar>
               <span>
@@ -1457,13 +1463,17 @@ export default function Home() {
             {view === "logs" && <AdminLogs logs={data.logs} />}{" "}
             {view === "settings" && (
               <SettingsV3
-                member={data.members.find((m) => m.id === 1) || data.members[0]}
+                member={currentMember}
                 onAvatar={(avatar) =>
                   patch(
                     "members",
-                    data.members.map((m) =>
-                      m.id === 1 ? { ...m, avatar } : m,
-                    ),
+                    matchedMember
+                      ? data.members.map((m) =>
+                          m.email.toLowerCase() === currentMember.email.toLowerCase()
+                            ? { ...m, avatar }
+                            : m,
+                        )
+                      : [{ ...currentMember, avatar }, ...data.members],
                     "عکس پروفایل را تغییر داد",
                   )
                 }
@@ -8211,15 +8221,28 @@ function SettingsV3({
 }) {
   const [uploading, setUploading] = useState(false);
   const upload = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("لطفاً یک فایل تصویری انتخاب کنید.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("حجم تصویر باید کمتر از ۱۰ مگابایت باشد.");
+      return;
+    }
     setUploading(true);
-    const body = new FormData();
-    body.append("file", file);
-    const response = await fetch("api/files", { method: "POST", body });
-    if (response.ok) {
-      onAvatar(await response.json());
-      toast.success("عکس پروفایل ذخیره شد");
-    } else toast.error("آپلود عکس انجام نشد");
-    setUploading(false);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch("api/files", { method: "POST", body });
+      const result = await response.json().catch(() => ({})) as Attachment & { error?: string };
+      if (!response.ok || !result.url) throw new Error(result.error || "آپلود عکس انجام نشد.");
+      onAvatar(result);
+      toast.success("عکس پروفایل شما ذخیره شد");
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "آپلود عکس انجام نشد.");
+    } finally {
+      setUploading(false);
+    }
   };
   return (
     <>
@@ -8231,7 +8254,7 @@ function SettingsV3({
           </span>
           <div>
             <h2>پروفایل من</h2>
-            <p>عکس نمایشی حساب مدیر را از این بخش تغییر دهید.</p>
+            <p>اطلاعات و عکس نمایشی حساب واردشده</p>
           </div>
         </div>
         <div className="own-profile-preview">
@@ -8249,7 +8272,8 @@ function SettingsV3({
           {uploading ? "در حال آپلود..." : "تغییر عکس پروفایل"}
           <input
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/*"
+            disabled={uploading}
             onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
           />
         </label>

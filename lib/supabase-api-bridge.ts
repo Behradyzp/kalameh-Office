@@ -42,10 +42,20 @@ async function uploadFile(body: FormData) {
   if (file.size > 20 * 1024 * 1024) return errorResponse("حداکثر حجم فایل ۲۰ مگابایت است.", 413);
   const extension = file.name.includes(".") ? `.${file.name.split(".").pop()}` : "";
   const path = `${user.id}/${crypto.randomUUID()}${extension.replace(/[^.a-zA-Z0-9]/g, "")}`;
-  const { error } = await supabase.storage.from("office-files").upload(path, file, {
+  let { error } = await supabase.storage.from("office-files").upload(path, file, {
     contentType: file.type || "application/octet-stream",
     upsert: false,
   });
+  if (error) {
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.data.session) {
+      const retry = await supabase.storage.from("office-files").upload(path, file, {
+        contentType: file.type || "application/octet-stream",
+        upsert: false,
+      });
+      error = retry.error;
+    }
+  }
   if (error) {
     const buffer = new Uint8Array(await file.arrayBuffer());
     let binary = "";
