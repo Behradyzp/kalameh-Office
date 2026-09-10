@@ -140,6 +140,7 @@ type PersonalTask = {
   title: string;
   date: string;
   archivedAt?: string;
+  ownerId?: number;
   repeat: "بدون تکرار" | "روزانه" | "هفتگی" | "ماهانه";
   status: "active" | "done" | "cancelled";
 };
@@ -147,7 +148,7 @@ type Transaction = {
   id: number;
   title: string;
   project: string;
-  type: "income" | "expense" | "receivable";
+  type: "income" | "expense" | "receivable" | "payable";
   amount: number;
   date: string;
   status: "paid" | "pending" | "overdue";
@@ -247,7 +248,7 @@ type Leave = {
   reason: string;
   status: "در انتظار" | "تأیید شده" | "رد شده";
 };
-type AuditLog = { id: number; member: string; action: string; time: string };
+type AuditLog = { id: number; member: string; action: string; time: string; createdAt?: number };
 type AppNotification = {
   id: number;
   text: string;
@@ -301,71 +302,71 @@ const defaultProjectTabs: ProjectTab[] = [
 ];
 const defaultLabels: LabelSettings = {
   tasks: ["سئو", "فنی", "طراحی", "گزارش", "عمومی"],
-  clients: ["سئو سایت", "طراحی سایت", "گرافیک", "تولید محتوا"],
+  clients: ["سئو سایت", "طراحی سایت", "پشتیبانی سایت", "گرافیک", "تولید محتوا"],
   leads: ["سئو سایت", "طراحی سایت", "کمپین تبلیغاتی", "شبکه‌های اجتماعی"],
 };
 const clientsSeed: Client[] = [
   {
     id: 1,
-    name: "امیر نقیب",
-    company: "شیائومی ایران",
-    phone: "۰۹۱۲ ۴۵۶ ۷۸۹۰",
-    email: "info@xiaomiiran.ir",
+    name: "مشتری نمونه یک",
+    company: "شرکت نمونه آلفا",
+    phone: "",
+    email: "client1@example.invalid",
     service: "سئو سایت",
   },
   {
     id: 2,
-    name: "کسری احراری",
-    company: "پالیزبام",
-    phone: "۰۹۱۹ ۶۲۱ ۸۵۸۰",
-    email: "info@palizbamco.com",
+    name: "مشتری نمونه دو",
+    company: "شرکت نمونه بتا",
+    phone: "",
+    email: "client2@example.invalid",
     service: "طراحی سایت",
   },
   {
     id: 3,
-    name: "محسن پارسا",
-    company: "آسارا",
-    phone: "۰۹۱۲ ۲۲۰ ۳۴۵۶",
-    email: "office@asara.ir",
+    name: "مشتری نمونه سه",
+    company: "شرکت نمونه گاما",
+    phone: "",
+    email: "client3@example.invalid",
     service: "سئو فروشگاهی",
   },
 ];
 const membersSeed: Member[] = [
   {
     id: 1,
-    name: "بهراد یزدان‌پناه",
-    email: "behradyzp@gmail.com",
+    name: "مدیر نمونه",
+    email: "admin@example.invalid",
     role: "مدیر کل",
     status: "فعال",
     permissions: ["همه بخش‌ها"],
   },
   {
     id: 2,
-    name: "پارسا پورعظیمی",
-    email: "parsa@kalameh.agency",
+    name: "عضو نمونه یک",
+    email: "member1@example.invalid",
     role: "توسعه‌دهنده",
     status: "فعال",
     permissions: ["پروژه‌ها", "وظایف", "پیام‌ها"],
   },
   {
     id: 3,
-    name: "ملیکا احمدی",
-    email: "melika@kalameh.agency",
+    name: "عضو نمونه دو",
+    email: "member2@example.invalid",
     role: "کارشناس سئو",
     status: "فعال",
     permissions: ["پروژه‌ها", "وظایف", "نامه‌ها"],
   },
   {
     id: 4,
-    name: "افشین مرادزاده",
-    email: "afshin@kalameh.agency",
+    name: "عضو نمونه سه",
+    email: "member3@example.invalid",
     role: "طراح رابط کاربری",
     status: "فعال",
     permissions: ["پروژه‌ها", "وظایف"],
   },
 ];
 const seed: Workspace = {
-  events:[{id:1,title:"جلسه گزارش ماهانه شیائومی ایران",date:"۱۴۰۵/۰۶/۲۰",time:"۱۱:۰۰",type:"جلسه",project:"شیائومی ایران"}],
+  events:[{id:1,title:"جلسه گزارش ماهانه پروژه نمونه",date:"۱۴۰۵/۰۶/۲۰",time:"۱۱:۰۰",type:"جلسه",project:"پروژه نمونه آلفا"}],
   notifications: [],
   personalTasks: [
     {
@@ -380,19 +381,19 @@ const seed: Workspace = {
   leads: [
     {
       id: 11,
-      name: "علی بهرام‌فرد",
-      company: "نوین‌شاپ",
-      phone: "۰۹۱۵ ۱۵۸ ۱۰۳۰",
-      email: "ali@novinshop.ir",
+      name: "لید نمونه یک",
+      company: "شرکت نمونه دلتا",
+      phone: "",
+      email: "lead1@example.invalid",
       service: "طراحی سایت",
       status: "در حال مذاکره",
     },
     {
       id: 12,
-      name: "سجاد مهرانی",
-      company: "هورام",
-      phone: "۰۹۱۲ ۵۴۴ ۸۷۴۳",
-      email: "sajad@hooram.ir",
+      name: "لید نمونه دو",
+      company: "شرکت نمونه اپسیلون",
+      phone: "",
+      email: "lead2@example.invalid",
       service: "سئو سایت",
       status: "منتظر قرارداد",
     },
@@ -401,57 +402,57 @@ const seed: Workspace = {
     {
       id: 1,
       title: "قرارداد سئو و تولید محتوا",
-      client: "شیائومی ایران",
+      client: "شرکت نمونه آلفا",
       date: "۱۴۰۵/۰۶/۰۱",
-      fileName: "xiaomi-seo-contract.pdf",
+      fileName: "sample-seo-contract.pdf",
       status: "فعال",
     },
     {
       id: 2,
       title: "قرارداد طراحی وب‌سایت",
-      client: "پالیزبام",
+      client: "شرکت نمونه بتا",
       date: "۱۴۰۵/۰۵/۱۸",
-      fileName: "palizbam-web-design.pdf",
+      fileName: "sample-web-design.pdf",
       status: "فعال",
     },
   ],
   projects: [
     {
       id: 1,
-      title: "شیائومی ایران",
-      client: "شیائومی ایران",
+      title: "پروژه نمونه آلفا",
+      client: "شرکت نمونه آلفا",
       service: "سئو سایت",
-      manager: "بهراد یزدان‌پناه",
+      manager: "مدیر نمونه",
       color: "#ef5350",
       done: 19,
       total: 25,
     },
     {
       id: 2,
-      title: "وب‌سایت آژانس کلمه",
+      title: "وب‌سایت داخلی نمونه",
       client: null,
       service: "طراحی سایت",
-      manager: "پارسا پورعظیمی",
+      manager: "عضو نمونه یک",
       color: "#7259c9",
       done: 16,
       total: 36,
     },
     {
       id: 3,
-      title: "آسارا",
-      client: "آسارا",
+      title: "پروژه نمونه گاما",
+      client: "شرکت نمونه گاما",
       service: "سئو فروشگاهی",
-      manager: "ملیکا احمدی",
+      manager: "عضو نمونه دو",
       color: "#26a69a",
       done: 22,
       total: 36,
     },
     {
       id: 4,
-      title: "پالیزبام",
-      client: "پالیزبام",
+      title: "پروژه نمونه بتا",
+      client: "شرکت نمونه بتا",
       service: "طراحی سایت",
-      manager: "افشین مرادزاده",
+      manager: "عضو نمونه سه",
       color: "#42a5f5",
       done: 8,
       total: 14,
@@ -462,8 +463,8 @@ const seed: Workspace = {
       id: 1,
       title: "آپدیت محتوای دسته‌بندی پاوربانک",
       description: "هدینگ‌ها، متا و لینک‌سازی داخلی اصلاح شود.",
-      project: "شیائومی ایران",
-      assignee: "ملیکا احمدی",
+      project: "پروژه نمونه آلفا",
+      assignee: "عضو نمونه دو",
       due: "۱۷ شهریور",
       label: "سئو",
       status: "backlog",
@@ -473,8 +474,8 @@ const seed: Workspace = {
       id: 2,
       title: "رفع مشکل نمایش قیمت موبایل",
       description: "قیمت متغیر محصول در موبایل بررسی شود.",
-      project: "شیائومی ایران",
-      assignee: "پارسا پورعظیمی",
+      project: "پروژه نمونه آلفا",
+      assignee: "عضو نمونه یک",
       due: "امروز",
       label: "فنی",
       status: "doing",
@@ -484,8 +485,8 @@ const seed: Workspace = {
       id: 3,
       title: "طراحی لندینگ خدمات سئو",
       description: "نسخه موبایل برای تأیید نهایی آماده شود.",
-      project: "وب‌سایت آژانس کلمه",
-      assignee: "افشین مرادزاده",
+      project: "وب‌سایت داخلی نمونه",
+      assignee: "عضو نمونه سه",
       due: "۱۹ شهریور",
       label: "طراحی",
       status: "done",
@@ -495,8 +496,8 @@ const seed: Workspace = {
       id: 4,
       title: "گزارش ماهانه سرچ کنسول",
       description: "گزارش KPI و برنامه ماه آینده آماده شد.",
-      project: "آسارا",
-      assignee: "بهراد یزدان‌پناه",
+      project: "پروژه نمونه گاما",
+      assignee: "مدیر نمونه",
       due: "۱۵ شهریور",
       label: "گزارش",
       status: "done",
@@ -507,7 +508,7 @@ const seed: Workspace = {
     {
       id: 1,
       title: "قرارداد سئو شهریور",
-      project: "شیائومی ایران",
+      project: "پروژه نمونه آلفا",
       type: "income",
       amount: 48000000,
       date: "۱۴۰۵/۰۶/۰۵",
@@ -525,7 +526,7 @@ const seed: Workspace = {
     {
       id: 3,
       title: "قسط دوم طراحی سایت",
-      project: "پالیزبام",
+      project: "پروژه نمونه بتا",
       type: "receivable",
       amount: 18000000,
       date: "۱۴۰۵/۰۶/۲۰",
@@ -534,7 +535,7 @@ const seed: Workspace = {
     {
       id: 4,
       title: "مانده قرارداد تولید محتوا",
-      project: "آسارا",
+      project: "پروژه نمونه گاما",
       type: "receivable",
       amount: 9500000,
       date: "۱۴۰۵/۰۵/۲۸",
@@ -545,9 +546,9 @@ const seed: Workspace = {
   chats: [
     {
       id: 1,
-      name: "پارسا پورعظیمی",
+      name: "عضو نمونه یک",
       group: false,
-      members: ["بهراد یزدان‌پناه", "پارسا پورعظیمی"],
+      members: ["مدیر نمونه", "عضو نمونه یک"],
       messages: [
         {
           id: 1,
@@ -567,7 +568,7 @@ const seed: Workspace = {
       id: 2,
       name: "گروه سئو",
       group: true,
-      members: ["بهراد یزدان‌پناه", "ملیکا احمدی"],
+      members: ["مدیر نمونه", "عضو نمونه دو"],
       messages: [
         {
           id: 1,
@@ -582,16 +583,16 @@ const seed: Workspace = {
     {
       id: 1,
       subject: "ارسال گزارش عملکرد شهریور",
-      from: "ملیکا احمدی",
-      to: "بهراد یزدان‌پناه",
-      body: "گزارش کامل عملکرد پروژه شیائومی جهت بررسی ارسال شد.",
+      from: "عضو نمونه دو",
+      to: "مدیر نمونه",
+      body: "گزارش کامل عملکرد پروژه نمونه جهت بررسی ارسال شد.",
       date: "۱۴۰۵/۰۶/۱۷",
       status: "جدید",
     },
     {
       id: 2,
-      subject: "تأیید صورت‌جلسه پروژه شیائومی",
-      from: "بهراد یزدان‌پناه",
+      subject: "تأیید صورت‌جلسه پروژه نمونه",
+      from: "مدیر نمونه",
       to: "تیم پروژه",
       body: "صورت‌جلسه مورد تأیید است.",
       date: "۱۴۰۵/۰۶/۱۵",
@@ -621,14 +622,14 @@ const seed: Workspace = {
   logs: [
     {
       id: 1,
-      member: "پارسا پورعظیمی",
+      member: "عضو نمونه یک",
       action: "وضعیت تسک «رفع مشکل نمایش قیمت موبایل» را تغییر داد",
       time: "امروز، ۱۲:۴۸",
     },
     {
       id: 2,
-      member: "ملیکا احمدی",
-      action: "گزارش پروژه شیائومی را ثبت کرد",
+      member: "عضو نمونه دو",
+      action: "گزارش پروژه نمونه را ثبت کرد",
       time: "امروز، ۱۱:۳۰",
     },
   ],
@@ -827,8 +828,9 @@ export default function Home() {
                 member: authUser?.name || "کاربر",
                 action: action || `بخش ${String(key)} را به‌روزرسانی کرد`,
                 time: `امروز، ${now()}`,
+                createdAt: Date.now(),
               },
-              ...(d.logs || []),
+              ...(d.logs || []).filter((log) => !log.createdAt || Date.now() - log.createdAt < 3 * 24 * 60 * 60 * 1000),
             ],
     }));
   const openCreate = (name: Exclude<typeof dialog, null>) => {
@@ -929,7 +931,8 @@ export default function Home() {
   };
   const currentMember=data.members.find(m=>m.email.toLowerCase()===currentEmail.toLowerCase())||data.members[0],isAdmin=authUser?.role==="admin";
   const viewPermission:Partial<Record<View,string>>={projects:"پروژه‌ها",tasks:"وظایف",finance:"مالی",clients:"مشتریان",leads:"لیدها",contracts:"قراردادها",team:"اعضای تیم",messages:"پیام‌ها",letters:"نامه‌ها",calendar:"تقویم",settings:"تنظیمات"};
-  const canView=(next:View)=>isAdmin||["dashboard","leaves","reports"].includes(next)||(viewPermission[next]&&currentMember?.permissions.includes(viewPermission[next]!));
+  const hasPermission=(...permissions:string[])=>isAdmin||permissions.some((permission)=>currentMember?.permissions.includes(permission))||currentMember?.permissions.includes("همه بخش‌ها");
+  const canView=(next:View)=>isAdmin||["dashboard","leaves"].includes(next)||(viewPermission[next]&&currentMember?.permissions.includes(viewPermission[next]!))||(next==="projects"&&hasPermission("مشاهده پروژه‌ها","افزودن پروژه","ویرایش پروژه","حذف پروژه"))||(next==="tasks"&&hasPermission("مشاهده تسک‌ها","افزودن تسک","ویرایش تسک","حذف تسک","تغییر وضعیت تسک"))||(next==="clients"&&hasPermission("مشاهده مشتریان","افزودن مشتری","ویرایش مشتری","حذف مشتری"))||(next==="finance"&&hasPermission("مشاهده مالی","مدیریت مالی"))||(next==="leads"&&hasPermission("مشاهده لیدها","افزودن لید","ویرایش لید","حذف لید"))||(next==="contracts"&&hasPermission("مشاهده قراردادها","مدیریت قراردادها"))||(next==="messages"&&hasPermission("ارسال پیام"))||(next==="letters"&&hasPermission("مشاهده نامه‌ها","ایجاد نامه"))||(next==="calendar"&&hasPermission("مشاهده تقویم","مدیریت تقویم"))||(next==="reports"&&hasPermission("گزارش‌ها"));
   const visibleProjects=data.projects.filter(p=>isAdmin||!p.ownerId||p.ownerId===currentMember?.id||(p.memberIds||[]).includes(currentMember?.id));
   const visibleProjectNames=new Set(visibleProjects.map(p=>p.title));
   const visibleTasks=data.tasks.filter(t=>visibleProjectNames.has(t.project)&&(isAdmin||t.assignee===currentMember?.name||visibleProjects.some(p=>p.title===t.project&&(p.memberIds||[]).includes(currentMember?.id))));
@@ -1121,9 +1124,10 @@ export default function Home() {
           <main className="content-area">
             {view === "dashboard" && (
               <DashboardV2
-                data={data}
+                data={{...data,personalTasks:data.personalTasks.filter((task)=>task.ownerId===currentMember?.id||(!task.ownerId&&isAdmin))}}
                 totals={totals}
                 setView={setView}
+                canSeeFinance={hasPermission("مالی","مشاهده مالی","مدیریت مالی")}
                 onToggle={(id) => {
                   const task = data.tasks.find((t) => t.id === id);
                   if (task)
@@ -1192,6 +1196,14 @@ export default function Home() {
                 transactions={data.transactions}
                 contracts={data.contracts}
                 onAdd={() => openCreate("client")}
+                onEdit={(id) => {
+                  setEditing(id);
+                  setDialog("client");
+                }}
+                onDelete={(id) => {
+                  patch("clients", data.clients.filter((client) => client.id !== id), "مشتری را حذف کرد");
+                  toast.success("مشتری حذف شد");
+                }}
               />
             )}{" "}
             {view === "leads" && (
@@ -1231,6 +1243,7 @@ export default function Home() {
                 attendance={data.attendance}
                 leaves={data.leaves}
                 logs={data.logs}
+                currentMemberId={currentMember?.id || 0}
                 onAdd={() => openCreate("member")}
                 onAccess={(m) => {
                   setSelectedMember(m);
@@ -1264,11 +1277,11 @@ export default function Home() {
                   patch(
                     "attendance",
                     data.attendance.map((a, i) =>
-                      a.memberId === 1 &&
+                      a.memberId === currentMember?.id &&
                       !a.checkOut &&
                       i ===
                         data.attendance.findIndex(
-                          (x) => x.memberId === 1 && !x.checkOut,
+                          (x) => x.memberId === currentMember?.id && !x.checkOut,
                         )
                         ? { ...a, checkOut: now() }
                         : a,
@@ -1380,10 +1393,12 @@ export default function Home() {
       <PersonalTasksPanelV2
         open={dialog === "personal"}
         close={() => setDialog(null)}
-        tasks={data.personalTasks}
-        save={(tasks) =>
-          patch("personalTasks", tasks, "تسک‌های شخصی را به‌روزرسانی کرد")
-        }
+        ownerId={currentMember?.id || 0}
+        tasks={data.personalTasks.filter((task) => task.ownerId === currentMember?.id || (!task.ownerId && isAdmin))}
+        save={(tasks) => patch("personalTasks", [
+          ...data.personalTasks.filter((task) => task.ownerId && task.ownerId !== currentMember?.id),
+          ...tasks.map((task) => ({ ...task, ownerId: currentMember?.id || 0 })),
+        ], "تسک‌های شخصی را به‌روزرسانی کرد")}
       />
       <ProjectDialogPro
         open={dialog === "project"}
@@ -1402,12 +1417,17 @@ export default function Home() {
       />
       <ClientDialogV2
         labels={data.preferences.labels?.clients || defaultLabels.clients}
+        client={data.clients.find((client) => client.id === editing)}
         open={dialog === "client"}
-        close={() => setDialog(null)}
-        save={(c) => {
-          patch("clients", [c, ...data.clients]);
-          pushNotification("مشتری «" + c.name + "» تعریف شد", "client");
+        close={() => {
           setDialog(null);
+          setEditing(null);
+        }}
+        save={(c) => {
+          patch("clients", editing ? data.clients.map((client) => client.id === editing ? c : client) : [c, ...data.clients]);
+          if (!editing) pushNotification("مشتری «" + c.name + "» تعریف شد", "client");
+          setDialog(null);
+          setEditing(null);
         }}
       />
       <LeadDialogV2
@@ -1443,6 +1463,7 @@ export default function Home() {
             editing
               ? data.tasks.map((x) => (x.id === editing ? t : x))
               : [t, ...data.tasks],
+            editing ? `تسک «${t.title}» را ویرایش کرد` : `تسک «${t.title}» را برای ${t.assignee} با مهلت ${t.endDate || t.due} ساخت`,
           );
           if (!editing)
             pushNotification("تسک «" + t.title + "» اضافه شد", "task");
@@ -1585,7 +1606,26 @@ export default function Home() {
 
 function CalendarCenter({tasks,events,projects,onSave}:{tasks:Task[];events:CalendarEvent[];projects:Project[];onSave:(event:CalendarEvent)=>void}){const [open,setOpen]=useState(false);const days=Array.from({length:31},(_,i)=>i+1);const dayKey=(day:number)=>`۱۴۰۵/۰۶/${faDigits(String(day).padStart(2,"0"))}`;return <><PageTitle title="تقویم یکپارچه" subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"><Button onClick={()=>setOpen(true)}><Plus/> رویداد جدید</Button></PageTitle><div className="calendar-toolbar"><button><ChevronDown/> شهریور ۱۴۰۵</button><div><span className="task-dot"/> ددلاین تسک <span className="meeting-dot"/> جلسه و رویداد</div></div><section className="agency-calendar"><header>{["شنبه","یکشنبه","دوشنبه","سه‌شنبه","چهارشنبه","پنجشنبه","جمعه"].map(x=><span key={x}>{x}</span>)}</header><div>{days.map(day=>{const key=dayKey(day),dayTasks=tasks.filter(t=>(t.endDate||t.due)===key),dayEvents=events.filter(e=>e.date===key);return <article key={day} className={day===17?"today":""}><b>{faDigits(String(day))}</b>{dayEvents.slice(0,2).map(e=><span className="calendar-event meeting" key={e.id}>{e.time} {e.title}</span>)}{dayTasks.slice(0,2).map(t=><span className="calendar-event task" key={t.id}>{t.title}</span>)}{dayTasks.length+dayEvents.length>4&&<small>+{faDigits(String(dayTasks.length+dayEvents.length-4))} مورد</small>}</article>})}</div></section><Modal open={open} close={()=>setOpen(false)} title="افزودن رویداد تقویم" description="جلسه، ددلاین یا یادآوری جدید را در تقویم شمسی ثبت کنید." submit="ثبت در تقویم" onSubmit={e=>{e.preventDefault();const d=fd(e);onSave({id:Date.now(),title:d.title,date:d.date,time:d.time,type:d.type as CalendarEvent['type'],project:d.project});setOpen(false)}}><div className="form-grid"><Field label="عنوان رویداد" name="title" wide required/><Field label="تاریخ شمسی" name="date" defaultValue="۱۴۰۵/۰۶/۱۷"/><Field label="ساعت" name="time" defaultValue="۱۰:۰۰"/><Field label="نوع رویداد" name="type"><select name="type"><option>جلسه</option><option>ددلاین</option><option>یادآوری</option></select></Field><Field label="پروژه" name="project"><select name="project"><option value="">بدون پروژه</option>{projects.map(p=><option key={p.id}>{p.title}</option>)}</select></Field></div></Modal></>}
 
-function ReportsCenter({data}:{data:Workspace}){const [section,setSection]=useState("projects");const done=data.tasks.filter(t=>t.status==="done"),active=data.tasks.filter(t=>!["done","cancelled"].includes(t.status));return <><PageTitle title="مرکز گزارش‌گیری" subtitle="گزارش یکپارچه مشتریان، پروژه‌ها، تسک‌ها، تیم و امور مالی"><Button variant="outline" onClick={()=>toast.success("گزارش برای خروجی آماده شد")}><Download/> خروجی گزارش</Button></PageTitle><div className="report-tabs">{[["projects","پروژه‌ها"],["clients","مشتریان"],["tasks","وظایف"],["team","اعضا"],["finance","مالی"]].map(([id,title])=><button className={section===id?"active":""} onClick={()=>setSection(id)} key={id}>{title}</button>)}</div><section className="report-kpis"><article><FolderKanban/><span><strong>{faDigits(String(data.projects.length))}</strong><small>پروژه قابل مشاهده</small></span></article><article><CheckCircle2/><span><strong>{faDigits(String(done.length))}</strong><small>تسک تکمیل‌شده</small></span></article><article><Clock3/><span><strong>{faDigits(String(active.length))}</strong><small>تسک در جریان</small></span></article><article><Users/><span><strong>{faDigits(String(data.clients.length))}</strong><small>مشتری ثبت‌شده</small></span></article></section><section className="panel report-table">{section==="projects"&&data.projects.map(p=><div key={p.id}><strong>{p.title}</strong><span>{p.client||"پروژه آزاد"}</span><span>{data.tasks.filter(t=>t.project===p.title&&t.status==="done").length} انجام‌شده</span><span>{data.tasks.filter(t=>t.project===p.title&&!['done','cancelled'].includes(t.status)).length} باز</span></div>)}{section==="clients"&&data.clients.map(c=><div key={c.id}><strong>{c.name}</strong><span>{c.company}</span><span>{c.service}</span><span>{data.projects.filter(p=>p.client===c.company).length} پروژه</span></div>)}{section==="tasks"&&done.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{t.assignee}</span><span>{t.archivedAt||t.endDate}</span></div>)}{section==="team"&&data.members.map(m=><div key={m.id}><strong>{m.name}</strong><span>{m.role}</span><span>{data.tasks.filter(t=>t.assignee===m.name&&t.status==="done").length} تکمیل‌شده</span><span>{data.attendance.filter(a=>a.memberId===m.id).length} روز حضور</span></div>)}{section==="finance"&&data.transactions.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{money(t.amount)}</span><span>{t.status==="paid"?"پرداخت‌شده":"باز"}</span></div>)}</section></>}
+function ReportsCenter({data}:{data:Workspace}){const [section,setSection]=useState("projects");const done=data.tasks.filter(t=>t.status==="done"),active=data.tasks.filter(t=>!["done","cancelled"].includes(t.status));return <><PageTitle title="مرکز گزارش‌گیری" subtitle="گزارش یکپارچه مشتریان، پروژه‌ها، تسک‌ها، تیم و امور مالی"><Button variant="outline" onClick={()=>downloadWorkspaceReport(section,data)}><Download/> خروجی گزارش</Button></PageTitle><div className="report-tabs">{[["projects","پروژه‌ها"],["clients","مشتریان"],["tasks","وظایف"],["team","اعضا"],["finance","مالی"]].map(([id,title])=><button className={section===id?"active":""} onClick={()=>setSection(id)} key={id}>{title}</button>)}</div><section className="report-kpis"><article><FolderKanban/><span><strong>{faDigits(String(data.projects.length))}</strong><small>پروژه قابل مشاهده</small></span></article><article><CheckCircle2/><span><strong>{faDigits(String(done.length))}</strong><small>تسک تکمیل‌شده</small></span></article><article><Clock3/><span><strong>{faDigits(String(active.length))}</strong><small>تسک در جریان</small></span></article><article><Users/><span><strong>{faDigits(String(data.clients.length))}</strong><small>مشتری ثبت‌شده</small></span></article></section><section className="panel report-table">{section==="projects"&&data.projects.map(p=><div key={p.id}><strong>{p.title}</strong><span>{p.client||"پروژه آزاد"}</span><span>{data.tasks.filter(t=>t.project===p.title&&t.status==="done").length} انجام‌شده</span><span>{data.tasks.filter(t=>t.project===p.title&&!['done','cancelled'].includes(t.status)).length} باز</span></div>)}{section==="clients"&&data.clients.map(c=><div key={c.id}><strong>{c.name}</strong><span>{c.company}</span><span>{c.service}</span><span>{data.projects.filter(p=>p.client===c.company).length} پروژه</span></div>)}{section==="tasks"&&done.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{t.assignee}</span><span>{t.archivedAt||t.endDate}</span></div>)}{section==="team"&&data.members.map(m=><div key={m.id}><strong>{m.name}</strong><span>{m.role}</span><span>{data.tasks.filter(t=>t.assignee===m.name&&t.status==="done").length} تکمیل‌شده</span><span>{data.attendance.filter(a=>a.memberId===m.id).length} روز حضور</span></div>)}{section==="finance"&&data.transactions.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{money(t.amount)}</span><span>{t.status==="paid"?"پرداخت‌شده":"باز"}</span></div>)}</section></>}
+
+function downloadWorkspaceReport(section:string,data:Workspace){
+  const rows:Record<string,string|number>[] = section==="projects"
+    ? data.projects.map(p=>({پروژه:p.title,مشتری:p.client||"پروژه آزاد"}))
+    : section==="clients"
+      ? data.clients.map(c=>({نام:c.name,شرکت:c.company,خدمت:c.service,تلفن:c.phone,ایمیل:c.email}))
+      : section==="tasks"
+        ? data.tasks.filter(t=>t.status==="done").map(t=>({وظیفه:t.title,پروژه:t.project,مسئول:t.assignee,تاریخ:t.archivedAt||t.endDate||t.due}))
+        : section==="team"
+          ? data.members.map(m=>({نام:m.name,نقش:m.role,ایمیل:m.email}))
+          : data.transactions.map(t=>({سند:t.title,پروژه:t.project,نوع:t.type,مبلغ:t.amount,تاریخ:t.date,وضعیت:t.status}));
+  if(!rows.length){toast.error("داده‌ای برای خروجی وجود ندارد");return}
+  const headers=Object.keys(rows[0]);
+  const escape=(value:string|number)=>`"${String(value??"").replaceAll('"','""')}"`;
+  const csv="\uFEFF"+[headers.join(","),...rows.map(row=>headers.map(header=>escape(row[header])).join(","))].join("\n");
+  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  const link=document.createElement("a");link.href=url;link.download=`kalameh-${section}-${Date.now()}.csv`;link.click();URL.revokeObjectURL(url);
+  toast.success("گزارش دانلود شد");
+}
 
 function GlobalSearchResults({query,data,onProject,onView,close}:{query:string;data:Workspace;onProject:(project:Project)=>void;onView:(view:View)=>void;close:()=>void}) {
   const clean=(value:string)=>value.toLocaleLowerCase("fa").replace(/[يى]/g,"ی").replace(/ك/g,"ک").replace(/\s+/g," ").trim();
@@ -1661,7 +1701,7 @@ function Dashboard({
   return (
     <>
       <PageTitle
-        title="سلام بهراد، روز بخیر"
+        title="سلام، روز بخیر"
         subtitle="خلاصه وضعیت امروز آژانس تبلیغاتی کلمه"
       >
         <Button onClick={() => setView("tasks")}>
@@ -2013,7 +2053,7 @@ function Finance({
                       ? "درآمد"
                       : t.type === "expense"
                         ? "هزینه"
-                        : "طلب"}
+                        : t.type === "payable" ? "بدهی" : "طلب"}
                   </Badge>
                 </TableCell>
                 <TableCell>{t.date}</TableCell>
@@ -2821,6 +2861,7 @@ function FinanceDialog({
             <option value="income">درآمد</option>
             <option value="expense">هزینه</option>
             <option value="receivable">طلب</option>
+            <option value="payable">بدهی</option>
           </select>
         </Field>
         <Field
@@ -2871,7 +2912,7 @@ function MemberDialog({
           email: d.email,
           role: d.role,
           status: "فعال",
-          permissions: ["وظایف", "پیام‌ها"],
+          permissions: ["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "ارسال پیام"],
         });
       }}
     >
@@ -2916,17 +2957,36 @@ function AccessDialog({
   if (!member) return null;
   const all = [
     "داشبورد",
-    "پروژه‌ها",
-    "وظایف",
-    "مالی",
-    "مشتریان",
-    "لیدها",
-    "قراردادها",
+    "مشاهده پروژه‌ها",
+    "افزودن پروژه",
+    "ویرایش پروژه",
+    "حذف پروژه",
+    "مشاهده تسک‌ها",
+    "افزودن تسک",
+    "ویرایش تسک",
+    "حذف تسک",
+    "تغییر وضعیت تسک",
+    "مشاهده مالی",
+    "مدیریت مالی",
+    "مشاهده مشتریان",
+    "افزودن مشتری",
+    "ویرایش مشتری",
+    "حذف مشتری",
+    "مشاهده لیدها",
+    "افزودن لید",
+    "ویرایش لید",
+    "حذف لید",
+    "مشاهده قراردادها",
+    "مدیریت قراردادها",
     "اعضای تیم",
     "حضور و غیاب",
     "مرخصی‌ها",
-    "پیام‌ها",
-    "نامه‌ها",
+    "ارسال پیام",
+    "مشاهده نامه‌ها",
+    "ایجاد نامه",
+    "مشاهده تقویم",
+    "مدیریت تقویم",
+    "گزارش‌ها",
     "تنظیمات",
   ];
   return (
@@ -2982,7 +3042,7 @@ function GroupDialog({
           id: Date.now(),
           name: d.name,
           group: true,
-          members: ["بهراد یزدان‌پناه", ...picked],
+          members: ["مدیر نمونه", ...picked],
           messages: [],
         });
         setPicked([]);
@@ -3039,7 +3099,7 @@ function LetterDialog({
         save({
           id: Date.now(),
           subject: d.subject,
-          from: "بهراد یزدان‌پناه",
+          from: "مدیر نمونه",
           to: d.to,
           body: d.body,
           date: "۱۴۰۵/۰۶/۱۷",
@@ -3904,6 +3964,7 @@ function TeamPro({
   attendance,
   leaves,
   logs,
+  currentMemberId,
   onAdd,
   onAccess,
   onDelete,
@@ -3917,6 +3978,7 @@ function TeamPro({
   attendance: Attendance[];
   leaves: Leave[];
   logs: AuditLog[];
+  currentMemberId: number;
   onAdd: () => void;
   onAccess: (m: Member) => void;
   onDelete: (id: number) => void;
@@ -3925,9 +3987,10 @@ function TeamPro({
   onLeave: (l: Leave) => void;
   onLeaveStatus: (id: number, s: Leave["status"]) => void;
 }) {
-  const [leaveOpen, setLeaveOpen] = useState(false),[reportMember,setReportMember]=useState<Member|null>(null);
+  const [leaveOpen, setLeaveOpen] = useState(false),[reportMember,setReportMember]=useState<Member|null>(null),[attendanceMonth,setAttendanceMonth]=useState("");
   const member = (id: number) => members.find((m) => m.id === id);
-  const currentOpen = attendance.some((a) => a.memberId === 1 && !a.checkOut);
+  const currentOpen = attendance.some((a) => a.memberId === currentMemberId && !a.checkOut);
+  const attendanceMonths=Array.from(new Set(attendance.map((entry)=>entry.date.slice(0,7)))).sort().reverse(),selectedAttendanceMonth=attendanceMonth||attendanceMonths[0]||"",monthlyAttendance=selectedAttendanceMonth?attendance.filter((entry)=>entry.date.startsWith(selectedAttendanceMonth)):attendance;
   return (
     <>
       <PageTitle
@@ -4016,6 +4079,7 @@ function TeamPro({
           </section>
         </TabsContent>
         <TabsContent value="attendance">
+          {attendanceMonths.length>0&&<div className="finance-month-bar"><div><CalendarDays/><span><small>ماه حضور و غیاب</small><strong>{monthTitle(selectedAttendanceMonth)}</strong></span></div><select value={selectedAttendanceMonth} onChange={(e)=>setAttendanceMonth(e.target.value)}>{attendanceMonths.map((value)=><option key={value} value={value}>{monthTitle(value)}</option>)}</select></div>}
           <section className="panel table-panel">
             <Table>
               <TableHeader>
@@ -4028,7 +4092,7 @@ function TeamPro({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {attendance.map((a) => (
+                {monthlyAttendance.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell>{member(a.memberId)?.name}</TableCell>
                     <TableCell>{a.date}</TableCell>
@@ -4098,7 +4162,7 @@ function TeamPro({
         <TabsContent value="monthly">
           <section className="monthly-grid">
             {members.map((m) => {
-              const rows = attendance.filter((a) => a.memberId === m.id);
+              const rows = monthlyAttendance.filter((a) => a.memberId === m.id);
               return (
                 <article className="panel monthly-card" key={m.id}>
                   <Avatar>
@@ -4106,7 +4170,7 @@ function TeamPro({
                   </Avatar>
                   <div>
                     <strong>{m.name}</strong>
-                    <small>شهریور ۱۴۰۵</small>
+                    <small>{selectedAttendanceMonth ? monthTitle(selectedAttendanceMonth) : "بدون رکورد"}</small>
                   </div>
                   <b>{rows.length} روز حضور</b>
                   <span>
@@ -4511,10 +4575,14 @@ function ClientsV2({
   transactions,
   contracts,
   onAdd,
+  onEdit,
+  onDelete,
 }: {
   clients: Client[];
   projects:Project[];transactions:Transaction[];contracts:Contract[];
   onAdd: () => void;
+  onEdit: (id: number) => void;
+  onDelete: (id: number) => void;
 }) {
   const [search, setSearch] = useState(""),[selected,setSelected]=useState<Client|null>(null);
   const visible = clients.filter((c) =>
@@ -4623,7 +4691,7 @@ function ClientsV2({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
-                  <DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onEdit(c.id)}>
                     <Edit3 /> ویرایش اطلاعات
                   </DropdownMenuItem>
                   <DropdownMenuItem>
@@ -4631,7 +4699,7 @@ function ClientsV2({
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={()=>setSelected(c)}><UserRoundCheck/> پروفایل کامل مشتری</DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="danger-item">
+                  <DropdownMenuItem className="danger-item" onClick={() => onDelete(c.id)}>
                     <Trash2 /> حذف مشتری
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -4832,7 +4900,7 @@ function DirectMessageDialog({
           id: Date.now(),
           name: d.member,
           group: false,
-          members: ["بهراد یزدان‌پناه", d.member],
+          members: ["مدیر نمونه", d.member],
           messages: d.message
             ? [{ id: Date.now(), mine: true, text: d.message, time: now() }]
             : [],
@@ -6015,8 +6083,8 @@ function ProjectPanelV3({
 
 function TaskDetailsModal({task,open,close,save}:{task?:Task;open:boolean;close:()=>void;save:(task:Task)=>void}){
  const [comment,setComment]=useState(""); if(!task)return null;
- const upload=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("فایل ارسال نشد");return}const attachment=await response.json() as Attachment;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"بهراد یزدان‌پناه",text:"فایل پیوست شد",time:`امروز، ${now()}`,attachment}]})};
- const submit=()=>{if(!comment.trim())return;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"بهراد یزدان‌پناه",text:comment.trim(),time:`امروز، ${now()}`}]});setComment("")};
+ const upload=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("فایل ارسال نشد");return}const attachment=await response.json() as Attachment;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"کاربر جاری",text:"فایل پیوست شد",time:`امروز، ${now()}`,attachment}]})};
+ const submit=()=>{if(!comment.trim())return;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"کاربر جاری",text:comment.trim(),time:`امروز، ${now()}`}]});setComment("")};
  return <Dialog open={open} onOpenChange={v=>!v&&close()}><DialogContent className="task-detail-dialog"><DialogHeader><DialogTitle>{task.title}</DialogTitle><DialogDescription>{task.project} · {task.assignee}</DialogDescription></DialogHeader><div className="task-detail-summary"><span><small>وضعیت</small><strong>{defaultBoardLabels[task.status]}</strong></span><span><small>شروع</small><strong>{task.startDate||"—"}</strong></span><span><small>مهلت پایان</small><strong>{task.endDate||task.due||"—"}</strong></span><span><small>برچسب</small><strong>{task.label}</strong></span></div><section className="task-description-box"><h3>توضیحات وظیفه</h3><p>{task.description||"برای این وظیفه توضیحی ثبت نشده است."}</p></section>{task.subtasks?.length?<section className="detail-subtasks"><h3>مراحل انجام</h3>{task.subtasks.map(s=><div className={s.done?"done":""} key={s.id}><span>{s.done&&<Check/>}</span>{s.title}</div>)}</section>:null}<section className="task-comments"><h3>دیدگاه‌ها و فعالیت‌ها</h3><div>{(task.comments||[]).map(c=><article key={c.id}><Avatar><AvatarFallback>{initials(c.author)}</AvatarFallback></Avatar><span><strong>{c.author}<small>{c.time}</small></strong><p>{c.text}</p>{c.attachment&&<a href={c.attachment.url} target="_blank" rel="noreferrer"><Paperclip/>{c.attachment.name}</a>}</span></article>)}{!task.comments?.length&&<p className="no-comments">هنوز دیدگاهی ثبت نشده است.</p>}</div><footer><Input value={comment} onChange={e=>setComment(e.target.value)} placeholder="دیدگاه یا گزارش انجام کار را بنویسید..."/><label><Paperclip/><input type="file" onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/></label><Button type="button" onClick={submit}><Send/></Button></footer></section></DialogContent></Dialog>
 }
 
@@ -6026,12 +6094,14 @@ function DashboardV2({
   setView,
   onToggle,
   onPersonalToggle,
+  canSeeFinance,
 }: {
   data: Workspace;
   totals: { income: number; expense: number; receivable: number };
   setView: (v: View) => void;
   onToggle: (id: number) => void;
   onPersonalToggle:(id:number)=>void;
+  canSeeFinance:boolean;
 }) {
   const openTasks = data.tasks
       .filter((t) => !["done", "cancelled"].includes(t.status))
@@ -6043,7 +6113,7 @@ function DashboardV2({
       <div className="dashboard-welcome">
         <div>
           <span>دوشنبه، ۱۷ شهریور</span>
-          <h1>سلام بهراد، روز بخیر 👋</h1>
+          <h1>سلام، روز بخیر 👋</h1>
           <p>
             امروز {faDigits(String(openTasks.length))} کار مهم برای پیگیری داری.
           </p>
@@ -6091,7 +6161,7 @@ function DashboardV2({
             <em>فرصت فروش فعال</em>
           </span>
         </article>
-        <article className="kpi-v2 coral">
+        {canSeeFinance && <article className="kpi-v2 coral">
           <div className="kpi-icon">
             <CircleDollarSign />
           </div>
@@ -6100,7 +6170,7 @@ function DashboardV2({
             <strong>{money(totals.receivable)}</strong>
             <em>ثبت‌شده این ماه</em>
           </span>
-        </article>
+        </article>}
       </section>
       <section className="dashboard-main-grid">
         <div className="panel today-panel">
@@ -6139,7 +6209,7 @@ function DashboardV2({
             )}
           </div>
         </div>
-        <div className="panel finance-dashboard-card">
+        {canSeeFinance && <div className="panel finance-dashboard-card">
           <header>
             <div>
               <h2>خلاصه مالی</h2>
@@ -6179,7 +6249,11 @@ function DashboardV2({
               </div>
             ))}
           </div>
-        </div>
+        </div>}
+      </section>
+      <section className="dashboard-activity-grid">
+        <div className="panel dashboard-mini-list"><header><Activity/><div><h2>آخرین فعالیت‌ها</h2><span>خلاصه فعالیت اعضای تیم</span></div></header>{data.logs.slice(0,5).map((log)=><div key={log.id}><strong>{log.member}</strong><span>{log.action}</span><time>{log.time}</time></div>)}{!data.logs.length&&<p>هنوز فعالیتی ثبت نشده است.</p>}</div>
+        <div className="panel dashboard-mini-list"><header><Clock3/><div><h2>ورود و خروج امروز</h2><span>آخرین ثبت‌های حضور تیم</span></div></header>{data.attendance.slice(0,5).map((entry)=><div key={entry.id}><strong>{data.members.find((member)=>member.id===entry.memberId)?.name||"عضو تیم"}</strong><span>ورود {entry.checkIn} · خروج {entry.checkOut||"ثبت نشده"}</span><time>{entry.date}</time></div>)}{!data.attendance.length&&<p>هنوز ورود یا خروجی ثبت نشده است.</p>}</div>
       </section>
     </>
   );
@@ -6421,10 +6495,18 @@ function SettingsV2({
                 </div>
               </header>
               <div className="editable-tags">
-                {draft[item.key].map((tag) => (
-                  <span key={tag}>
-                    {tag}
+                {draft[item.key].map((tag, index) => (
+                  <span key={`${item.key}-${index}`}>
+                    <input
+                      aria-label={`ویرایش برچسب ${tag}`}
+                      value={tag}
+                      onChange={(e) => setDraft((current) => ({
+                        ...current,
+                        [item.key]: current[item.key].map((value, currentIndex) => currentIndex === index ? e.target.value : value),
+                      }))}
+                    />
                     <button
+                      aria-label={`حذف برچسب ${tag}`}
                       onClick={() =>
                         setDraft((d) => ({
                           ...d,
@@ -6575,23 +6657,25 @@ function ClientDialogV2({
   close,
   save,
   labels,
+  client,
 }: {
   open: boolean;
   close: () => void;
   save: (c: Client) => void;
   labels: string[];
+  client?: Client;
 }) {
   return (
     <Modal
       open={open}
       close={close}
-      title="ثبت مشتری جدید"
-      description="اطلاعات تماس و خدمت مشتری را وارد کنید."
+      title={client ? "ویرایش مشتری" : "ثبت مشتری جدید"}
+      description={client ? "اطلاعات و برچسب خدمت مشتری را تغییر دهید." : "اطلاعات تماس و خدمت مشتری را وارد کنید."}
       onSubmit={(e) => {
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: client?.id || Date.now(),
           name: d.name,
           company: d.company,
           phone: d.phone,
@@ -6601,12 +6685,12 @@ function ClientDialogV2({
       }}
     >
       <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" required />
-        <Field label="نام شرکت" name="company" required />
-        <Field label="شماره تلفن" name="phone" required />
-        <Field label="ایمیل" name="email" type="email" />
+        <Field label="نام و نام خانوادگی" name="name" defaultValue={client?.name} required />
+        <Field label="نام شرکت" name="company" defaultValue={client?.company} required />
+        <Field label="شماره تلفن" name="phone" defaultValue={client?.phone} required />
+        <Field label="ایمیل" name="email" type="email" defaultValue={client?.email} />
         <Field label="برچسب خدمت" name="service">
-          <select name="service">
+          <select name="service" defaultValue={client?.service}>
             {labels.map((x) => (
               <option key={x}>{x}</option>
             ))}
@@ -6709,7 +6793,7 @@ function MemberDialogV2({
           email: d.email,
           role: d.role,
           status: "فعال",
-          permissions: ["وظایف", "پیام‌ها"],
+          permissions: ["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "ارسال پیام"],
           avatar: avatar || undefined,
         },d.password);
         if(saved)setAvatar(null);
@@ -6908,6 +6992,16 @@ function PersonalTasksPanel({
   );
 }
 
+function downloadFinancialRows(rows:Transaction[],month:string){
+  if(!rows.length){toast.error("سندی برای خروجی این ماه وجود ندارد");return}
+  const header="عنوان,پروژه,نوع,تاریخ,مبلغ,وضعیت";
+  const quote=(value:string|number)=>`"${String(value).replaceAll('"','""')}"`;
+  const csv="\uFEFF"+[header,...rows.map((row)=>[row.title,row.project,row.type,row.date,row.amount,row.status].map(quote).join(","))].join("\n");
+  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  const link=document.createElement("a");link.href=url;link.download=`financial-${month}.csv`;link.click();URL.revokeObjectURL(url);
+  toast.success("گزارش مالی دانلود شد");
+}
+
 function FinanceV2({
   rows,
   onAdd,
@@ -6944,6 +7038,9 @@ function FinanceV2({
           (r.type === "income" || r.type === "receivable"),
       )
       .reduce((s, r) => s + r.amount, 0),
+    payable = filtered
+      .filter((r) => r.status !== "paid" && r.type === "payable")
+      .reduce((s, r) => s + r.amount, 0),
     balance = income - expense;
   const monthName = (value: string) => {
     const names = [
@@ -6973,7 +7070,7 @@ function FinanceV2({
         title="مدیریت مالی"
         subtitle="گزارش دقیق درآمد، هزینه و مطالبات به تفکیک ماه"
       >
-        <Button variant="outline">
+        <Button variant="outline" onClick={()=>downloadFinancialRows(filtered,month)}>
           <FileText /> خروجی گزارش
         </Button>
         <Button onClick={onAdd}>
@@ -7020,8 +7117,9 @@ function FinanceV2({
             <WalletCards />
           </span>
           <div>
-            <small>مطالبات ماه</small>
+            <small>طلبکار / بدهکار ماه</small>
             <strong>{money(receivable)}</strong>
+            <em>بدهی باز: {money(payable)}</em>
           </div>
         </article>
         <article className="balance">
@@ -7073,7 +7171,7 @@ function FinanceV2({
                 ? "درآمد"
                 : t.type === "expense"
                   ? "هزینه"
-                  : "طلب"}
+                  : t.type === "payable" ? "بدهی" : "طلب"}
             </Badge>
             <time>{t.date}</time>
             <strong className={`finance-amount ${t.type}`}>
@@ -7597,11 +7695,15 @@ function LeaveCenter({
   onStatus: (id: number, status: Leave["status"]) => void;
 }) {
   const [open, setOpen] = useState(false),
-    [tab, setTab] = useState("pending");
+    [tab, setTab] = useState("pending"),
+    [month, setMonth] = useState("");
   const member = (id: number) => members.find((m) => m.id === id),
-    pending = leaves.filter((l) => l.status === "در انتظار"),
-    approved = leaves.filter((l) => l.status === "تأیید شده"),
-    rejected = leaves.filter((l) => l.status === "رد شده"),
+    months=Array.from(new Set(leaves.map((leave)=>leave.from.slice(0,7)))).sort().reverse(),
+    selectedMonth=month||months[0]||"",
+    monthlyLeaves=selectedMonth?leaves.filter((leave)=>leave.from.startsWith(selectedMonth)):leaves,
+    pending = monthlyLeaves.filter((l) => l.status === "در انتظار"),
+    approved = monthlyLeaves.filter((l) => l.status === "تأیید شده"),
+    rejected = monthlyLeaves.filter((l) => l.status === "رد شده"),
     shown =
       tab === "pending"
         ? pending
@@ -7609,7 +7711,7 @@ function LeaveCenter({
           ? approved
           : tab === "rejected"
             ? rejected
-            : leaves;
+            : monthlyLeaves;
   return (
     <>
       <PageTitle
@@ -7620,6 +7722,7 @@ function LeaveCenter({
           <CalendarOff /> درخواست مرخصی
         </Button>
       </PageTitle>
+      {months.length>0&&<div className="finance-month-bar"><div><CalendarDays/><span><small>ماه درخواست‌ها</small><strong>{monthTitle(selectedMonth)}</strong></span></div><select value={selectedMonth} onChange={(e)=>setMonth(e.target.value)}>{months.map((value)=><option key={value} value={value}>{monthTitle(value)}</option>)}</select></div>}
       <section className="leave-kpis">
         <article>
           <span className="pending">
@@ -7920,11 +8023,13 @@ function PersonalTasksPanelV2({
   open,
   close,
   tasks,
+  ownerId,
   save,
 }: {
   open: boolean;
   close: () => void;
   tasks: PersonalTask[];
+  ownerId: number;
   save: (tasks: PersonalTask[]) => void;
 }) {
   const [title, setTitle] = useState(""),
@@ -7941,7 +8046,7 @@ function PersonalTasksPanelV2({
   const add = () => {
     if (!title.trim()) return;
     save([
-      { id: Date.now(), title: title.trim(), date, repeat, status: "active" },
+      { id: Date.now(), title: title.trim(), date, repeat, status: "active", ownerId },
       ...tasks,
     ]);
     setTitle("");
