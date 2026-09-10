@@ -63,7 +63,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -276,6 +276,36 @@ type Workspace = {
   events:CalendarEvent[];
   preferences: Preferences;
 };
+
+function MobileMenuTrigger() {
+  const { toggleSidebar } = useSidebar();
+  return (
+    <button
+      type="button"
+      className="mobile-trigger"
+      onClick={toggleSidebar}
+      aria-label="باز کردن منوی اصلی"
+    >
+      <Menu aria-hidden="true" />
+    </button>
+  );
+}
+
+function AutoCloseSidebarMenuButton({
+  onClick,
+  ...props
+}: React.ComponentProps<typeof SidebarMenuButton>) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  return (
+    <SidebarMenuButton
+      {...props}
+      onClick={(event) => {
+        onClick?.(event);
+        if (isMobile) setOpenMobile(false);
+      }}
+    />
+  );
+}
 
 const columns: { id: TaskStatus; title: string; color: string }[] = [
   { id: "backlog", title: "برای انجام", color: "#90a4ae" },
@@ -1002,7 +1032,7 @@ export default function Home() {
                     .filter((item) => canView(item.id as View))
                     .map((item) => (
                       <SidebarMenuItem key={item.id}>
-                        <SidebarMenuButton
+                        <AutoCloseSidebarMenuButton
                           className="nav-button"
                           isActive={view === item.id}
                           onClick={() => setView(item.id as View)}
@@ -1017,7 +1047,7 @@ export default function Home() {
                               }
                             </b>
                           )}
-                        </SidebarMenuButton>
+                        </AutoCloseSidebarMenuButton>
                       </SidebarMenuItem>
                     ))}
                 </SidebarMenu>
@@ -1085,9 +1115,7 @@ export default function Home() {
         <SidebarInset className="main-shell">
           <header className="topbar">
             <div className="topbar-right">
-              <SidebarTrigger className="mobile-trigger">
-                <Menu />
-              </SidebarTrigger>
+              <MobileMenuTrigger />
               <button className="workspace-switch">
                 <span className="workspace-dot">ک</span> آژانس تبلیغاتی کلمه{" "}
                 <ChevronDown size={16} />
