@@ -1,5 +1,4 @@
-project_id = "replace-with-your-project-ref"
+project_id = "khcvfklaafyuzafunwtf"
 
 [functions.office-api]
 verify_jwt = true
-
