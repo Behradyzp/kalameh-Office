@@ -160,6 +160,7 @@ type Client = {
   phone: string;
   email: string;
   service: string;
+  website?: string;
 };
 type Lead = Client & {
   status: "در حال مذاکره" | "منتظر قرارداد" | "پیگیری مجدد";
@@ -750,7 +751,9 @@ export default function Home() {
     [ready, setReady] = useState(false),
     [query, setQuery] = useState(""),
     [fontScale, setFontScale] = useState(1),
-    [theme, setTheme] = useState("violet");
+    [theme, setTheme] = useState("violet"),
+    [loadError,setLoadError]=useState(""),
+    [loadAttempt,setLoadAttempt]=useState(0);
   const [dialog, setDialog] = useState<
       | null
       | "project"
@@ -781,8 +784,10 @@ export default function Home() {
     [authUser,setAuthUser]=useState<SignedInUser|null>(null);
   useEffect(() => {
     if(authStatus!=="authenticated")return;
+    setReady(false);
+    setLoadError("");
     fetch("api/workspace")
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async(r) => {const payload=await r.json();if(!r.ok||!payload?.data)throw new Error(payload?.error||"دریافت اطلاعات از دیتابیس انجام نشد.");return payload})
       .then((v) => {
         if (v?.data) {
           const raw = v.data as Partial<Workspace>;
@@ -822,8 +827,8 @@ export default function Home() {
         }
         setReady(true);
       })
-      .catch(() => setReady(true));
-  }, [authStatus]);
+      .catch((reason) => setLoadError(reason instanceof Error?reason.message:"دریافت اطلاعات از دیتابیس انجام نشد."));
+  }, [authStatus,loadAttempt]);
   useEffect(()=>{let active=true;const heartbeat=()=>fetch("api/session").then(r=>r.json()).then(({user})=>{if(!active)return;if(!user?.email){setAuthStatus("anonymous");setAuthUser(null);return}setAuthStatus("authenticated");setAuthUser(user);setCurrentEmail(user.email);setData(d=>({...d,members:d.members.map(m=>m.email.toLowerCase()===user.email.toLowerCase()?{...m,lastSeen:Date.now()}:m)}))}).catch(()=>active&&setAuthStatus("anonymous"));heartbeat();const timer=setInterval(heartbeat,60000);return()=>{active=false;clearInterval(timer)}},[]);
   useEffect(() => {
     document.documentElement.style.fontSize = `${16 * fontScale}px`;
@@ -836,7 +841,7 @@ export default function Home() {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ data }),
-        }).catch(() => {}),
+        }).then(async(response)=>{if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||"ذخیره اطلاعات انجام نشد.")}}).catch((reason) => toast.error(reason instanceof Error?reason.message:"ذخیره اطلاعات انجام نشد.")),
       500,
     );
     return () => clearTimeout(t);
@@ -899,6 +904,8 @@ export default function Home() {
   );
   if(authStatus==="loading")return <main className="login-screen" dir="rtl"><div className="login-loading"><img src="/kalameh-logo.png" alt=""/><span>در حال آماده‌سازی میزکار...</span></div></main>;
   if(authStatus==="anonymous")return <LoginScreen onLogin={(user)=>{setAuthUser(user);setCurrentEmail(user.email);setAuthStatus("authenticated")}}/>;
+  if(loadError)return <main className="login-screen" dir="rtl"><div className="login-loading"><img src="/kalameh-logo.png" alt=""/><strong>اطلاعات بارگذاری نشد</strong><span>{loadError}</span><Button onClick={()=>setLoadAttempt(value=>value+1)}>تلاش دوباره</Button></div></main>;
+  if(!ready)return <main className="login-screen" dir="rtl"><div className="login-loading"><img src="/kalameh-logo.png" alt=""/><span>در حال دریافت اطلاعات از دیتابیس...</span></div></main>;
   const moveTask = (id: number, status: TaskStatus) =>
     patch(
       "tasks",
@@ -1222,6 +1229,7 @@ export default function Home() {
             {view === "clients" && (
               <ClientsV2
                 clients={data.clients}
+                labels={data.preferences.labels?.clients || defaultLabels.clients}
                 projects={data.projects}
                 transactions={data.transactions}
                 contracts={data.contracts}
@@ -1233,6 +1241,13 @@ export default function Home() {
                 onDelete={(id) => {
                   patch("clients", data.clients.filter((client) => client.id !== id), "مشتری را حذف کرد");
                   toast.success("مشتری حذف شد");
+                }}
+                onImport={(rows)=>{
+                  const identity=(client:Client)=>client.email?`email:${client.email.toLowerCase()}`:client.phone?`phone:${client.phone.replace(/\s/g,"")}`:`name:${client.name}|${client.company}`;
+                  const existing=new Set(data.clients.map(identity));
+                  const fresh=rows.filter(client=>!existing.has(identity(client)));
+                  if(!fresh.length){toast.error("همه مشتریان این فایل قبلاً ثبت شده‌اند.");return}
+                  patch("clients",[...fresh,...data.clients],`${fresh.length} مشتری را از اکسل وارد کرد`);
                 }}
               />
             )}{" "}
@@ -3407,6 +3422,7 @@ function ClientDialog({
           company: d.company,
           phone: d.phone,
           email: d.email,
+          website: d.website,
           service: d.service,
         });
       }}
@@ -4611,6 +4627,24 @@ function ProjectPanelPro({
   );
 }
 
+const downloadClientTemplate=async()=>{
+  const XLSX=await import("xlsx");
+  const sheet=XLSX.utils.json_to_sheet([{
+    "نام و نام خانوادگی":"علی رضایی","نام شرکت":"شرکت نمونه","شماره تماس":"09123456789",
+    "ایمیل":"info@example.com","آدرس سایت":"https://example.com","برچسب خدمت":"طراحی سایت",
+  }]);
+  sheet["!cols"]=[{wch:24},{wch:24},{wch:18},{wch:28},{wch:32},{wch:20}];
+  const workbook=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook,sheet,"مشتریان");
+  XLSX.writeFile(workbook,"نمونه-ورود-مشتریان.xlsx");
+};
+const readClientExcel=async(file:File,labels:string[])=>{
+  const XLSX=await import("xlsx");
+  const workbook=XLSX.read(await file.arrayBuffer(),{type:"array"}),sheet=workbook.Sheets[workbook.SheetNames[0]],rows=XLSX.utils.sheet_to_json<Record<string,unknown>>(sheet,{defval:""});
+  const value=(row:Record<string,unknown>,...keys:string[])=>String(keys.map(key=>row[key]).find(item=>item!==undefined&&item!=="")||"").trim();
+  return rows.map((row,index):Client=>({id:Date.now()+index,name:value(row,"نام و نام خانوادگی","نام مشتری","name"),company:value(row,"نام شرکت","شرکت","company"),phone:value(row,"شماره تماس","تلفن","phone"),email:value(row,"ایمیل","email"),website:value(row,"آدرس سایت","وب‌سایت","website"),service:value(row,"برچسب خدمت","خدمت","service")||labels[0]||"عمومی"})).filter(client=>client.name&&client.company);
+};
+
 function ClientsV2({
   clients,
   projects,
@@ -4619,21 +4653,30 @@ function ClientsV2({
   onAdd,
   onEdit,
   onDelete,
+  onImport,
+  labels,
 }: {
   clients: Client[];
   projects:Project[];transactions:Transaction[];contracts:Contract[];
   onAdd: () => void;
   onEdit: (id: number) => void;
   onDelete: (id: number) => void;
+  onImport: (rows: Client[]) => void;
+  labels: string[];
 }) {
-  const [search, setSearch] = useState(""),[selected,setSelected]=useState<Client|null>(null);
+  const [search, setSearch] = useState(""),[selected,setSelected]=useState<Client|null>(null),[importing,setImporting]=useState(false);
   const visible = clients.filter((c) =>
-    `${c.name} ${c.company} ${c.service} ${c.phone}`.includes(search),
+    `${c.name} ${c.company} ${c.service} ${c.phone} ${c.email} ${c.website||""}`.toLowerCase().includes(search.toLowerCase()),
   );
   const services = new Set(clients.map((c) => c.service)).size;
   return (
     <>
       <PageTitle title="مشتریان" subtitle="پرونده مشتریان و خدمات فعال">
+        <Button variant="outline" onClick={downloadClientTemplate}><Download /> دانلود اکسل نمونه</Button>
+        <label className="client-import-button">
+          <FilePlus2 /> {importing?"در حال خواندن...":"ورود از اکسل"}
+          <input type="file" accept=".xlsx,.xls,.csv" disabled={importing} onChange={async(event)=>{const file=event.target.files?.[0];if(!file)return;setImporting(true);try{const rows=await readClientExcel(file,labels);if(!rows.length)throw new Error("ردیف معتبری در فایل پیدا نشد.");onImport(rows);toast.success(`${faDigits(String(rows.length))} مشتری از اکسل اضافه شد`)}catch(reason){toast.error(reason instanceof Error?reason.message:"خواندن فایل اکسل انجام نشد.")}finally{setImporting(false);event.target.value=""}}}/>
+        </label>
         <Button onClick={onAdd}>
           <UserPlus /> افزودن مشتری
         </Button>
@@ -6722,6 +6765,7 @@ function ClientDialogV2({
           company: d.company,
           phone: d.phone,
           email: d.email,
+          website: d.website,
           service: d.service,
         });
       }}
@@ -6731,6 +6775,7 @@ function ClientDialogV2({
         <Field label="نام شرکت" name="company" defaultValue={client?.company} required />
         <Field label="شماره تلفن" name="phone" defaultValue={client?.phone} required />
         <Field label="ایمیل" name="email" type="email" defaultValue={client?.email} />
+        <Field label="آدرس سایت" name="website" type="url" defaultValue={client?.website} />
         <Field label="برچسب خدمت" name="service">
           <select name="service" defaultValue={client?.service}>
             {labels.map((x) => (
