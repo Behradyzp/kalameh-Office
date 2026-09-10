@@ -47,8 +47,9 @@ async function uploadFile(body: FormData) {
     upsert: false,
   });
   if (error) return errorResponse(error.message || "بارگذاری فایل انجام نشد.", 503);
-  const { data } = supabase.storage.from("office-files").getPublicUrl(path);
-  return jsonResponse({ name: file.name, type: file.type || "application/octet-stream", url: data.publicUrl }, 201);
+  const { data: signed, error: signedError } = await supabase.storage.from("office-files").createSignedUrl(path, 3600);
+  if (signedError) return errorResponse("ساخت لینک امن فایل انجام نشد.", 503);
+  return jsonResponse({ name: file.name, type: file.type || "application/octet-stream", url: signed.signedUrl, storagePath: path }, 201);
 }
 
 export function installSupabaseApiBridge() {
