@@ -688,7 +688,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: SignedInUser) => void }) {
           setError("");
           const form = new FormData(event.currentTarget);
           try {
-            const response = await fetch("/api/auth/login", {
+            const response = await fetch("api/auth/login", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
@@ -750,7 +750,7 @@ export default function Home() {
     [authUser,setAuthUser]=useState<SignedInUser|null>(null);
   useEffect(() => {
     if(authStatus!=="authenticated")return;
-    fetch("/api/workspace")
+    fetch("api/workspace")
       .then((r) => (r.ok ? r.json() : null))
       .then((v) => {
         if (v?.data) {
@@ -793,7 +793,7 @@ export default function Home() {
       })
       .catch(() => setReady(true));
   }, [authStatus]);
-  useEffect(()=>{let active=true;const heartbeat=()=>fetch("/api/session").then(r=>r.json()).then(({user})=>{if(!active)return;if(!user?.email){setAuthStatus("anonymous");setAuthUser(null);return}setAuthStatus("authenticated");setAuthUser(user);setCurrentEmail(user.email);setData(d=>({...d,members:d.members.map(m=>m.email.toLowerCase()===user.email.toLowerCase()?{...m,lastSeen:Date.now()}:m)}))}).catch(()=>active&&setAuthStatus("anonymous"));heartbeat();const timer=setInterval(heartbeat,60000);return()=>{active=false;clearInterval(timer)}},[]);
+  useEffect(()=>{let active=true;const heartbeat=()=>fetch("api/session").then(r=>r.json()).then(({user})=>{if(!active)return;if(!user?.email){setAuthStatus("anonymous");setAuthUser(null);return}setAuthStatus("authenticated");setAuthUser(user);setCurrentEmail(user.email);setData(d=>({...d,members:d.members.map(m=>m.email.toLowerCase()===user.email.toLowerCase()?{...m,lastSeen:Date.now()}:m)}))}).catch(()=>active&&setAuthStatus("anonymous"));heartbeat();const timer=setInterval(heartbeat,60000);return()=>{active=false;clearInterval(timer)}},[]);
   useEffect(() => {
     document.documentElement.style.fontSize = `${16 * fontScale}px`;
   }, [fontScale]);
@@ -801,7 +801,7 @@ export default function Home() {
     if (!ready || authStatus!=="authenticated") return;
     const t = setTimeout(
       () =>
-        fetch("/api/workspace", {
+        fetch("api/workspace", {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ data }),
@@ -824,7 +824,7 @@ export default function Home() {
           : [
               {
                 id: Date.now(),
-                member: "بهراد یزدان‌پناه",
+                member: authUser?.name || "کاربر",
                 action: action || `بخش ${String(key)} را به‌روزرسانی کرد`,
                 time: `امروز، ${now()}`,
               },
@@ -919,7 +919,7 @@ export default function Home() {
   const uploadChatFile = async (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/files", { method: "POST", body });
+    const response = await fetch("api/files", { method: "POST", body });
     if (!response.ok) {
       toast.error("ارسال فایل انجام نشد");
       return;
@@ -1039,7 +1039,7 @@ export default function Home() {
               </span>
               <Settings size={18} />
             </button>
-            <button className="sidebar-logout" onClick={async()=>{await fetch("/api/auth/logout",{method:"POST"});setAuthUser(null);setAuthStatus("anonymous");setReady(false)}}><LogOut size={17}/> خروج از حساب</button>
+            <button className="sidebar-logout" onClick={async()=>{await fetch("api/auth/logout",{method:"POST"});setAuthUser(null);setAuthStatus("anonymous");setReady(false)}}><LogOut size={17}/> خروج از حساب</button>
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="main-shell">
@@ -1236,20 +1236,22 @@ export default function Home() {
                   setSelectedMember(m);
                   setDialog("access");
                 }}
-                onDelete={(id) =>
-                  patch(
-                    "members",
-                    data.members.filter((m) => m.id !== id),
-                    "یک همکار را حذف کرد",
-                  )
-                }
+                onDelete={async(id) => {
+                  const member=data.members.find((m)=>m.id===id);
+                  if(!member)return;
+                  const response=await fetch("api/auth/users",{method:"DELETE",headers:{"content-type":"application/json"},body:JSON.stringify({email:member.email})});
+                  const result=await response.json() as {error?:string};
+                  if(!response.ok){toast.error(result.error||"حذف حساب انجام نشد");return}
+                  patch("members",data.members.filter((m) => m.id !== id),"یک همکار را حذف کرد");
+                  toast.success("حساب همکار غیرفعال شد");
+                }}
                 onCheckIn={() =>
                   patch(
                     "attendance",
                     [
                       {
                         id: Date.now(),
-                        memberId: 1,
+                        memberId: currentMember?.id || 1,
                         date: "۱۴۰۵/۰۶/۱۷",
                         checkIn: now(),
                       },
@@ -1464,7 +1466,7 @@ export default function Home() {
         open={dialog === "member"}
         close={() => setDialog(null)}
         save={async(m,password) => {
-          const response=await fetch("/api/auth/users",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:m.name,email:m.email,role:m.role,password})});
+          const response=await fetch("api/auth/users",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:m.name,email:m.email,role:m.role,password})});
           const result=await response.json() as {error?:string};
           if(!response.ok){toast.error(result.error||"ساخت حساب انجام نشد");return false}
           patch("members", [m, ...data.members]);
@@ -1522,6 +1524,25 @@ export default function Home() {
         members={data.members}
         close={() => setSelectedProject(null)}
         onSettings={() => setDialog("projectSettings")}
+        onDeleteProject={() => {
+          if (!selectedProject) return;
+          const confirmed = window.confirm(
+            `پروژه «${selectedProject.title}» و تمام وظایف آن حذف شود؟ این عملیات قابل بازگشت نیست.`,
+          );
+          if (!confirmed) return;
+          patch(
+            "tasks",
+            data.tasks.filter((task) => task.project !== selectedProject.title),
+            `وظایف پروژه «${selectedProject.title}» را حذف کرد`,
+          );
+          patch(
+            "projects",
+            data.projects.filter((project) => project.id !== selectedProject.id),
+            `پروژه «${selectedProject.title}» را حذف کرد`,
+          );
+          setSelectedProject(null);
+          toast.success("پروژه و وظایف مرتبط حذف شدند");
+        }}
         onAddTask={() => {
           setEditing(null);
           setDialog("task");
@@ -1560,7 +1581,7 @@ export default function Home() {
   );
 }
 
-function CalendarCenter({tasks,events,projects,onSave}:{tasks:Task[];events:CalendarEvent[];projects:Project[];onSave:(event:CalendarEvent)=>void}){const [open,setOpen]=useState(false);const days=Array.from({length:31},(_,i)=>i+1);const dayKey=(day:number)=>`۱۴۰۵/۰۶/${faDigits(String(day).padStart(2,"0"))}`;return <><PageTitle title="تقویم یکپارچه" subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"><Button onClick={()=>setOpen(true)}><Plus/> رویداد جدید</Button></PageTitle><div className="calendar-toolbar"><button><ChevronDown/> شهریور ۱۴۰۵</button><div><span className="task-dot"/> ددلاین تسک <span className="meeting-dot"/> جلسه و رویداد</div></div><section className="agency-calendar"><header>{["شنبه","یکشنبه","دوشنبه","سه‌شنبه","چهارشنبه","پنجشنبه","جمعه"].map(x=><span key={x}>{x}</span>)}</header><div>{days.map(day=>{const key=dayKey(day),dayTasks=tasks.filter(t=>(t.endDate||t.due)===key),dayEvents=events.filter(e=>e.date===key);return <article key={day} className={day===17?"today":""}><b>{faDigits(String(day))}</b>{dayEvents.slice(0,2).map(e=><span className="calendar-event meeting" key={e.id}>{e.time} {e.title}</span>)}{dayTasks.slice(0,2).map(t=><span className="calendar-event task" key={t.id}>{t.title}</span>)}{dayTasks.length+dayEvents.length>4&&<small>+{faDigits(String(dayTasks.length+dayEvents.length-4))} مورد</small>}</article>})}</div></section><Modal open={open} close={()=>setOpen(false)} title="افزودن رویداد تقویم" submit="ثبت در تقویم" onSubmit={e=>{e.preventDefault();const d=fd(e);onSave({id:Date.now(),title:d.title,date:d.date,time:d.time,type:d.type as CalendarEvent['type'],project:d.project});setOpen(false)}}><div className="form-grid"><Field label="عنوان رویداد" name="title" wide required/><Field label="تاریخ شمسی" name="date" defaultValue="۱۴۰۵/۰۶/۱۷"/><Field label="ساعت" name="time" defaultValue="۱۰:۰۰"/><Field label="نوع رویداد" name="type"><select name="type"><option>جلسه</option><option>ددلاین</option><option>یادآوری</option></select></Field><Field label="پروژه" name="project"><select name="project"><option value="">بدون پروژه</option>{projects.map(p=><option key={p.id}>{p.title}</option>)}</select></Field></div></Modal></>}
+function CalendarCenter({tasks,events,projects,onSave}:{tasks:Task[];events:CalendarEvent[];projects:Project[];onSave:(event:CalendarEvent)=>void}){const [open,setOpen]=useState(false);const days=Array.from({length:31},(_,i)=>i+1);const dayKey=(day:number)=>`۱۴۰۵/۰۶/${faDigits(String(day).padStart(2,"0"))}`;return <><PageTitle title="تقویم یکپارچه" subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"><Button onClick={()=>setOpen(true)}><Plus/> رویداد جدید</Button></PageTitle><div className="calendar-toolbar"><button><ChevronDown/> شهریور ۱۴۰۵</button><div><span className="task-dot"/> ددلاین تسک <span className="meeting-dot"/> جلسه و رویداد</div></div><section className="agency-calendar"><header>{["شنبه","یکشنبه","دوشنبه","سه‌شنبه","چهارشنبه","پنجشنبه","جمعه"].map(x=><span key={x}>{x}</span>)}</header><div>{days.map(day=>{const key=dayKey(day),dayTasks=tasks.filter(t=>(t.endDate||t.due)===key),dayEvents=events.filter(e=>e.date===key);return <article key={day} className={day===17?"today":""}><b>{faDigits(String(day))}</b>{dayEvents.slice(0,2).map(e=><span className="calendar-event meeting" key={e.id}>{e.time} {e.title}</span>)}{dayTasks.slice(0,2).map(t=><span className="calendar-event task" key={t.id}>{t.title}</span>)}{dayTasks.length+dayEvents.length>4&&<small>+{faDigits(String(dayTasks.length+dayEvents.length-4))} مورد</small>}</article>})}</div></section><Modal open={open} close={()=>setOpen(false)} title="افزودن رویداد تقویم" description="جلسه، ددلاین یا یادآوری جدید را در تقویم شمسی ثبت کنید." submit="ثبت در تقویم" onSubmit={e=>{e.preventDefault();const d=fd(e);onSave({id:Date.now(),title:d.title,date:d.date,time:d.time,type:d.type as CalendarEvent['type'],project:d.project});setOpen(false)}}><div className="form-grid"><Field label="عنوان رویداد" name="title" wide required/><Field label="تاریخ شمسی" name="date" defaultValue="۱۴۰۵/۰۶/۱۷"/><Field label="ساعت" name="time" defaultValue="۱۰:۰۰"/><Field label="نوع رویداد" name="type"><select name="type"><option>جلسه</option><option>ددلاین</option><option>یادآوری</option></select></Field><Field label="پروژه" name="project"><select name="project"><option value="">بدون پروژه</option>{projects.map(p=><option key={p.id}>{p.title}</option>)}</select></Field></div></Modal></>}
 
 function ReportsCenter({data}:{data:Workspace}){const [section,setSection]=useState("projects");const done=data.tasks.filter(t=>t.status==="done"),active=data.tasks.filter(t=>!["done","cancelled"].includes(t.status));return <><PageTitle title="مرکز گزارش‌گیری" subtitle="گزارش یکپارچه مشتریان، پروژه‌ها، تسک‌ها، تیم و امور مالی"><Button variant="outline" onClick={()=>toast.success("گزارش برای خروجی آماده شد")}><Download/> خروجی گزارش</Button></PageTitle><div className="report-tabs">{[["projects","پروژه‌ها"],["clients","مشتریان"],["tasks","وظایف"],["team","اعضا"],["finance","مالی"]].map(([id,title])=><button className={section===id?"active":""} onClick={()=>setSection(id)} key={id}>{title}</button>)}</div><section className="report-kpis"><article><FolderKanban/><span><strong>{faDigits(String(data.projects.length))}</strong><small>پروژه قابل مشاهده</small></span></article><article><CheckCircle2/><span><strong>{faDigits(String(done.length))}</strong><small>تسک تکمیل‌شده</small></span></article><article><Clock3/><span><strong>{faDigits(String(active.length))}</strong><small>تسک در جریان</small></span></article><article><Users/><span><strong>{faDigits(String(data.clients.length))}</strong><small>مشتری ثبت‌شده</small></span></article></section><section className="panel report-table">{section==="projects"&&data.projects.map(p=><div key={p.id}><strong>{p.title}</strong><span>{p.client||"پروژه آزاد"}</span><span>{data.tasks.filter(t=>t.project===p.title&&t.status==="done").length} انجام‌شده</span><span>{data.tasks.filter(t=>t.project===p.title&&!['done','cancelled'].includes(t.status)).length} باز</span></div>)}{section==="clients"&&data.clients.map(c=><div key={c.id}><strong>{c.name}</strong><span>{c.company}</span><span>{c.service}</span><span>{data.projects.filter(p=>p.client===c.company).length} پروژه</span></div>)}{section==="tasks"&&done.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{t.assignee}</span><span>{t.archivedAt||t.endDate}</span></div>)}{section==="team"&&data.members.map(m=><div key={m.id}><strong>{m.name}</strong><span>{m.role}</span><span>{data.tasks.filter(t=>t.assignee===m.name&&t.status==="done").length} تکمیل‌شده</span><span>{data.attendance.filter(a=>a.memberId===m.id).length} روز حضور</span></div>)}{section==="finance"&&data.transactions.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{money(t.amount)}</span><span>{t.status==="paid"?"پرداخت‌شده":"باز"}</span></div>)}</section></>}
 
@@ -4212,7 +4233,7 @@ function ProjectDialogPro({
   save: (p: Project) => void;
 }) {
   const [picked, setPicked] = useState<number[]>([1]),[logo,setLogo]=useState<Attachment|undefined>();
-  const uploadLogo=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("/api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری لوگو انجام نشد");return}setLogo(await response.json());toast.success("لوگوی پروژه آماده شد")};
+  const uploadLogo=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری لوگو انجام نشد");return}setLogo(await response.json());toast.success("لوگوی پروژه آماده شد")};
   return (
     <Modal
       open={open}
@@ -5510,7 +5531,7 @@ function ProjectSettingsV3({
         },
       ]);
   };
-  const uploadLogo=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("/api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری لوگو انجام نشد");return}setLogo(await response.json());toast.success("لوگوی پروژه تغییر کرد")};
+  const uploadLogo=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری لوگو انجام نشد");return}setLogo(await response.json());toast.success("لوگوی پروژه تغییر کرد")};
   return (
     <Modal
       open={open}
@@ -5699,6 +5720,7 @@ function ProjectPanelV3({
   members,
   close,
   onSettings,
+  onDeleteProject,
   onAddTask,
   onMove,
   onToggleSubtask,
@@ -5710,6 +5732,7 @@ function ProjectPanelV3({
   members: Member[];
   close: () => void;
   onSettings: () => void;
+  onDeleteProject: () => void;
   onAddTask: () => void;
   onMove: (id: number, s: TaskStatus) => void;
   onToggleSubtask:(taskId:number,subtaskId:number)=>void;
@@ -5746,7 +5769,7 @@ function ProjectPanelV3({
     allArchived.filter(
       (t) => t.status === status && archiveKey(t) === archiveMonth,
     );
-  const uploadProjectFile=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("/api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری فایل انجام نشد");return}const attachment=await response.json() as Attachment;onUpdateProject({...project,files:[attachment,...(project.files||[])]});toast.success("فایل به پروژه اضافه شد")};
+  const uploadProjectFile=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری فایل انجام نشد");return}const attachment=await response.json() as Attachment;onUpdateProject({...project,files:[attachment,...(project.files||[])]});toast.success("فایل به پروژه اضافه شد")};
   return (
     <Dialog open={Boolean(project)} onOpenChange={(v) => !v && close()}>
       <DialogContent
@@ -5777,6 +5800,14 @@ function ProjectPanelV3({
             onClick={onSettings}
           >
             <Settings /> تنظیمات پروژه
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="project-delete-button"
+            onClick={onDeleteProject}
+          >
+            <Trash2 /> حذف پروژه
           </Button>
           <Button onClick={onAddTask}>
             <Plus /> افزودن وظیفه
@@ -5982,7 +6013,7 @@ function ProjectPanelV3({
 
 function TaskDetailsModal({task,open,close,save}:{task?:Task;open:boolean;close:()=>void;save:(task:Task)=>void}){
  const [comment,setComment]=useState(""); if(!task)return null;
- const upload=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("/api/files",{method:"POST",body});if(!response.ok){toast.error("فایل ارسال نشد");return}const attachment=await response.json() as Attachment;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"بهراد یزدان‌پناه",text:"فایل پیوست شد",time:`امروز، ${now()}`,attachment}]})};
+ const upload=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("فایل ارسال نشد");return}const attachment=await response.json() as Attachment;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"بهراد یزدان‌پناه",text:"فایل پیوست شد",time:`امروز، ${now()}`,attachment}]})};
  const submit=()=>{if(!comment.trim())return;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"بهراد یزدان‌پناه",text:comment.trim(),time:`امروز، ${now()}`}]});setComment("")};
  return <Dialog open={open} onOpenChange={v=>!v&&close()}><DialogContent className="task-detail-dialog"><DialogHeader><DialogTitle>{task.title}</DialogTitle><DialogDescription>{task.project} · {task.assignee}</DialogDescription></DialogHeader><div className="task-detail-summary"><span><small>وضعیت</small><strong>{defaultBoardLabels[task.status]}</strong></span><span><small>شروع</small><strong>{task.startDate||"—"}</strong></span><span><small>مهلت پایان</small><strong>{task.endDate||task.due||"—"}</strong></span><span><small>برچسب</small><strong>{task.label}</strong></span></div><section className="task-description-box"><h3>توضیحات وظیفه</h3><p>{task.description||"برای این وظیفه توضیحی ثبت نشده است."}</p></section>{task.subtasks?.length?<section className="detail-subtasks"><h3>مراحل انجام</h3>{task.subtasks.map(s=><div className={s.done?"done":""} key={s.id}><span>{s.done&&<Check/>}</span>{s.title}</div>)}</section>:null}<section className="task-comments"><h3>دیدگاه‌ها و فعالیت‌ها</h3><div>{(task.comments||[]).map(c=><article key={c.id}><Avatar><AvatarFallback>{initials(c.author)}</AvatarFallback></Avatar><span><strong>{c.author}<small>{c.time}</small></strong><p>{c.text}</p>{c.attachment&&<a href={c.attachment.url} target="_blank" rel="noreferrer"><Paperclip/>{c.attachment.name}</a>}</span></article>)}{!task.comments?.length&&<p className="no-comments">هنوز دیدگاهی ثبت نشده است.</p>}</div><footer><Input value={comment} onChange={e=>setComment(e.target.value)} placeholder="دیدگاه یا گزارش انجام کار را بنویسید..."/><label><Paperclip/><input type="file" onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/></label><Button type="button" onClick={submit}><Send/></Button></footer></section></DialogContent></Dialog>
 }
@@ -6653,7 +6684,7 @@ function MemberDialogV2({
     setUploading(true);
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/files", { method: "POST", body });
+    const response = await fetch("api/files", { method: "POST", body });
     if (response.ok) {
       setAvatar(await response.json());
       toast.success("عکس همکار آماده شد");
@@ -7789,7 +7820,7 @@ function SettingsV3({
     setUploading(true);
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/files", { method: "POST", body });
+    const response = await fetch("api/files", { method: "POST", body });
     if (response.ok) {
       onAvatar(await response.json());
       toast.success("عکس پروفایل ذخیره شد");
