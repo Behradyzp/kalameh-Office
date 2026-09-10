@@ -1223,6 +1223,27 @@ export default function Home() {
                     ),
                   )
                 }
+                onImport={(rows) => {
+                  const identity = (row: Transaction) =>
+                    `${row.title.trim().toLowerCase()}|${row.project.trim().toLowerCase()}|${row.type}|${row.amount}|${row.date}`;
+                  const existing = new Set(data.transactions.map(identity));
+                  const fresh = rows.filter((row) => {
+                    const key = identity(row);
+                    if (existing.has(key)) return false;
+                    existing.add(key);
+                    return true;
+                  });
+                  if (!fresh.length) {
+                    toast.error("همه اسناد این فایل قبلاً ثبت شده‌اند.");
+                    return;
+                  }
+                  patch(
+                    "transactions",
+                    [...fresh, ...data.transactions],
+                    `${fresh.length} سند مالی را از اکسل وارد کرد`,
+                  );
+                  toast.success(`${faDigits(String(fresh.length))} سند مالی ثبت شد`);
+                }}
               />
             )}{" "}
             {view==="calendar"&&<CalendarCenter tasks={visibleTasks} events={data.events} projects={visibleProjects} onSave={event=>patch("events",[event,...data.events],"رویداد تقویم ثبت کرد")}/>} {view==="reports"&&<ReportsCenter data={{...data,projects:visibleProjects,tasks:visibleTasks}}/>}
@@ -7095,12 +7116,132 @@ function downloadFinancialRows(rows:Transaction[],month:string){
   toast.success("گزارش مالی دانلود شد");
 }
 
+const financialTypeLabels: Record<Transaction["type"], string> = {
+  income: "درآمد",
+  expense: "هزینه",
+  receivable: "طلب",
+  payable: "بدهی",
+};
+const financialStatusLabels: Record<Transaction["status"], string> = {
+  paid: "پرداخت‌شده",
+  pending: "در انتظار",
+  overdue: "سررسید گذشته",
+};
+const normalizeExcelText = (value: unknown) =>
+  String(value ?? "")
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .trim();
+
+const downloadFinancialTemplate = async () => {
+  const XLSX = await import("xlsx");
+  const sheet = XLSX.utils.json_to_sheet([
+    {
+      "شرح سند": "قسط اول قرارداد طراحی سایت",
+      "پروژه / دسته": "پروژه نمونه",
+      "نوع سند": "درآمد",
+      "مبلغ (تومان)": 25000000,
+      "تاریخ شمسی": "1405/06/20",
+      وضعیت: "پرداخت‌شده",
+    },
+    {
+      "شرح سند": "هزینه سرویس ماهانه",
+      "پروژه / دسته": "هزینه عمومی",
+      "نوع سند": "هزینه",
+      "مبلغ (تومان)": 3500000,
+      "تاریخ شمسی": "1405/06/25",
+      وضعیت: "در انتظار",
+    },
+  ]);
+  sheet["!cols"] = [
+    { wch: 34 },
+    { wch: 25 },
+    { wch: 16 },
+    { wch: 20 },
+    { wch: 16 },
+    { wch: 20 },
+  ];
+  const guide = XLSX.utils.aoa_to_sheet([
+    ["راهنمای ورود اسناد مالی"],
+    ["نوع سند", "درآمد، هزینه، طلب یا بدهی"],
+    ["وضعیت", "پرداخت‌شده، در انتظار یا سررسید گذشته"],
+    ["تاریخ شمسی", "با قالب 1405/06/20 وارد شود"],
+    ["مبلغ", "عدد و به تومان؛ بدون درج کلمه تومان"],
+  ]);
+  guide["!cols"] = [{ wch: 22 }, { wch: 48 }];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "اسناد مالی");
+  XLSX.utils.book_append_sheet(workbook, guide, "راهنما");
+  XLSX.writeFile(workbook, "نمونه-ورود-اسناد-مالی.xlsx");
+};
+
+const readFinancialExcel = async (file: File) => {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    defval: "",
+    raw: false,
+  });
+  const value = (row: Record<string, unknown>, ...keys: string[]) =>
+    keys.map((key) => row[key]).find((item) => item !== undefined && item !== "");
+  const typeMap: Record<string, Transaction["type"]> = {
+    "درآمد": "income", income: "income",
+    "هزینه": "expense", expense: "expense",
+    "طلب": "receivable", "مطالبه": "receivable", receivable: "receivable",
+    "بدهی": "payable", payable: "payable",
+  };
+  const statusMap: Record<string, Transaction["status"]> = {
+    "پرداخت‌شده": "paid", "پرداخت شده": "paid", paid: "paid",
+    "در انتظار": "pending", pending: "pending",
+    "سررسید گذشته": "overdue", overdue: "overdue",
+  };
+  const errors: string[] = [];
+  const imported: Transaction[] = [];
+  records.forEach((record, index) => {
+    const title = normalizeExcelText(value(record, "شرح سند", "عنوان", "title"));
+    const project = normalizeExcelText(value(record, "پروژه / دسته", "پروژه", "دسته", "project")) || "هزینه عمومی";
+    const typeText = normalizeExcelText(value(record, "نوع سند", "نوع", "type")).toLowerCase();
+    const statusText = normalizeExcelText(value(record, "وضعیت", "status")).toLowerCase();
+    const amountText = normalizeExcelText(value(record, "مبلغ (تومان)", "مبلغ", "amount"))
+      .replace(/[٬،,\s]/g, "")
+      .replace(/تومان/g, "");
+    const amount = Number(amountText);
+    const date = normalizeExcelText(value(record, "تاریخ شمسی", "تاریخ", "date"))
+      .replaceAll("-", "/");
+    const type = typeMap[typeText];
+    const status = statusMap[statusText] || "pending";
+    const dateParts = date.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+    const validDate = Boolean(
+      dateParts &&
+      Number(dateParts[2]) >= 1 && Number(dateParts[2]) <= 12 &&
+      Number(dateParts[3]) >= 1 && Number(dateParts[3]) <= 31,
+    );
+    if (!title || !type || !Number.isFinite(amount) || amount <= 0 || !validDate) {
+      errors.push(`ردیف ${faDigits(String(index + 2))}: شرح، نوع، مبلغ یا تاریخ معتبر نیست.`);
+      return;
+    }
+    imported.push({
+      id: Date.now() + index,
+      title,
+      project,
+      type,
+      amount,
+      date: `${dateParts![1]}/${dateParts![2].padStart(2, "0")}/${dateParts![3].padStart(2, "0")}`,
+      status,
+    });
+  });
+  if (errors.length) throw new Error(errors.slice(0, 3).join(" "));
+  return imported;
+};
+
 function FinanceV2({
   rows,
   onAdd,
   onEdit,
   onDelete,
   onStatus,
+  onImport,
 }: {
   rows: Transaction[];
   totals: { income: number; expense: number; receivable: number };
@@ -7108,7 +7249,9 @@ function FinanceV2({
   onEdit: (id: number) => void;
   onDelete: (id: number) => void;
   onStatus: (id: number, s: Transaction["status"]) => void;
+  onImport: (rows: Transaction[]) => void;
 }) {
+  const [importing, setImporting] = useState(false);
   const months = Array.from(new Set(rows.map((r) => r.date.slice(0, 7))))
       .sort()
       .reverse(),
@@ -7163,6 +7306,32 @@ function FinanceV2({
         title="مدیریت مالی"
         subtitle="گزارش دقیق درآمد، هزینه و مطالبات به تفکیک ماه"
       >
+        <Button variant="outline" onClick={downloadFinancialTemplate}>
+          <Download /> دانلود اکسل نمونه
+        </Button>
+        <label className="client-import-button">
+          <FilePlus2 /> {importing ? "در حال خواندن..." : "ورود از اکسل"}
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            disabled={importing}
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              setImporting(true);
+              try {
+                const imported = await readFinancialExcel(file);
+                if (!imported.length) throw new Error("ردیف معتبری در فایل پیدا نشد.");
+                onImport(imported);
+              } catch (reason) {
+                toast.error(reason instanceof Error ? reason.message : "خواندن فایل اکسل انجام نشد.");
+              } finally {
+                setImporting(false);
+                event.target.value = "";
+              }
+            }}
+          />
+        </label>
         <Button variant="outline" onClick={()=>downloadFinancialRows(filtered,month)}>
           <FileText /> خروجی گزارش
         </Button>
