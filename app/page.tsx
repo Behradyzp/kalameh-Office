@@ -1298,6 +1298,8 @@ export default function Home() {
               <LeaveCenter
                 members={data.members}
                 leaves={data.leaves}
+                currentMember={currentMember}
+                isAdmin={isAdmin}
                 onSubmit={(leave) =>
                   patch(
                     "leaves",
@@ -7582,11 +7584,15 @@ function TasksTableV3({
 function LeaveCenter({
   members,
   leaves,
+  currentMember,
+  isAdmin,
   onSubmit,
   onStatus,
 }: {
   members: Member[];
   leaves: Leave[];
+  currentMember?: Member;
+  isAdmin: boolean;
   onSubmit: (leave: Leave) => void;
   onStatus: (id: number, status: Leave["status"]) => void;
 }) {
@@ -7607,8 +7613,8 @@ function LeaveCenter({
   return (
     <>
       <PageTitle
-        title="مدیریت مرخصی‌ها"
-        subtitle="ثبت درخواست و تصمیم‌گیری مدیر"
+        title={isAdmin ? "مدیریت مرخصی‌ها" : "مرخصی‌های من"}
+        subtitle={isAdmin ? "ثبت درخواست و تصمیم‌گیری مدیر کل" : "ثبت و پیگیری درخواست‌های مرخصی شما"}
       >
         <Button onClick={() => setOpen(true)}>
           <CalendarOff /> درخواست مرخصی
@@ -7700,7 +7706,7 @@ function LeaveCenter({
             <p>
               <strong>علت درخواست:</strong> {l.reason}
             </p>
-            {l.status === "در انتظار" ? (
+            {isAdmin && l.status === "در انتظار" ? (
               <footer>
                 <Button
                   variant="outline"
@@ -7712,7 +7718,7 @@ function LeaveCenter({
                   <Check /> تأیید مرخصی
                 </Button>
               </footer>
-            ) : (
+            ) : isAdmin ? (
               <footer>
                 <Button
                   variant="ghost"
@@ -7721,7 +7727,7 @@ function LeaveCenter({
                   بازگردانی برای بررسی
                 </Button>
               </footer>
-            )}
+            ) : null}
           </article>
         ))}
       </section>
@@ -7747,17 +7753,12 @@ function LeaveCenter({
         }}
       >
         <div className="form-grid">
-          <Field label="درخواست برای" name="memberId">
-            <select name="memberId">
-              {members
-                .filter((m) => m.status === "فعال")
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} — {m.role}
-                  </option>
-                ))}
-            </select>
-          </Field>
+          <input type="hidden" name="memberId" value={currentMember?.id || ""} />
+          <div className="wide leave-request-owner">
+            <span>درخواست‌دهنده</span>
+            <strong>{currentMember?.name || "کاربر جاری"}</strong>
+            <small>این درخواست فقط برای حساب کاربری خودتان ثبت می‌شود.</small>
+          </div>
           <label>
             نوع مرخصی
             <select name="type">
