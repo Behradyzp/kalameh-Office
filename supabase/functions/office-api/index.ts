@@ -184,6 +184,8 @@ Deno.serve(async (request) => {
       if (error) throw error;
       const current = (row.data || {}) as Record<string, unknown>;
       const submitted = body.data as Record<string, unknown>;
+      const requiredCollections = ["tasks","personalTasks","notifications","transactions","clients","leads","contracts","projects","members","chats","letters","attendance","leaves","logs","events"];
+      if (isAdmin && requiredCollections.some((key) => !Array.isArray(submitted[key]))) return respond({ error: "ذخیره متوقف شد؛ اطلاعات یکی از بخش‌ها ناقص است." }, 422);
       let next = stripSignedUrls(submitted) as Record<string, unknown>;
       if (!isAdmin) {
         const allowed = allowedKeys(current, profile.email, false);
@@ -234,6 +236,11 @@ Deno.serve(async (request) => {
           });
           next.leaves = [...others, ...own];
         }
+      }
+      if (isAdmin) {
+        await admin.from("workspace_backups").insert({ workspace_id: "main", data: current, saved_by: profile.id });
+        const { data: oldBackups } = await admin.from("workspace_backups").select("id").eq("workspace_id", "main").order("created_at", { ascending: false }).range(50, 500);
+        if (oldBackups?.length) await admin.from("workspace_backups").delete().in("id", oldBackups.map((backup) => backup.id));
       }
       const { error: saveError } = await admin.from("workspace_state").update({ data: next, updated_at: new Date().toISOString() }).eq("id", "main");
       if (saveError) throw saveError;
