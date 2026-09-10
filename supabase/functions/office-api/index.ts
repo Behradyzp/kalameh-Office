@@ -285,6 +285,31 @@ Deno.serve(async (request) => {
       await admin.from("audit_logs").insert({ user_id: profile.id, action: "user_deleted", metadata: { email } });
       return respond({ ok: true });
     }
+    if (action === "user_update") {
+      if (!isAdmin) return respond({ error: "فقط مدیر کل به این بخش دسترسی دارد." }, 403);
+      const currentEmail = String(body.currentEmail || "").trim().toLowerCase();
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      const name = String(body.name || "").trim();
+      const role = body.role === "admin" ? "admin" : "member";
+      const active = body.active !== false;
+      if (!currentEmail || !email.includes("@") || !name) return respond({ error: "نام و ایمیل معتبر الزامی است." }, 422);
+      if (password && password.length < 8) return respond({ error: "رمز جدید باید حداقل ۸ کاراکتر باشد." }, 422);
+      const { data: target } = await admin.from("profiles").select("id,role").eq("email", currentEmail).maybeSingle();
+      if (!target) return respond({ error: "حساب کاربر پیدا نشد." }, 404);
+      const attributes: Record<string, unknown> = {
+        email,
+        email_confirm: true,
+        user_metadata: { name },
+        app_metadata: { role },
+      };
+      if (password) attributes.password = password;
+      const { error } = await admin.auth.admin.updateUserById(target.id, attributes);
+      if (error) return respond({ error: error.message }, 409);
+      await admin.from("profiles").update({ email, name, role, active }).eq("id", target.id);
+      await admin.from("audit_logs").insert({ user_id: profile.id, action: "user_updated", metadata: { updated_user_id: target.id, email } });
+      return respond({ user: { id: target.id, email, name, role, active } });
+    }
     return respond({ error: "عملیات پیدا نشد." }, 404);
   } catch (error) {
     console.error(error);
