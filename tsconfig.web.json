@@ -5,8 +5,8 @@
     "types": ["vite/client"]
   },
   "include": [
-    "cpanel-src/**/*.ts",
-    "cpanel-src/**/*.tsx",
+    "web/**/*.ts",
+    "web/**/*.tsx",
     "app/page.tsx",
     "components/**/*.ts",
     "components/**/*.tsx",
@@ -19,7 +19,6 @@
     "worker",
     "db",
     "dist",
-    "cpanel-package",
     "node_modules"
   ]
 }
