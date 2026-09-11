@@ -171,17 +171,23 @@ Deno.serve(async (request) => {
 
     if (action === "session") return respond({ user: profile });
     if (action === "workspace_get") {
-      const { data: row, error } = await admin.from("workspace_state").select("data").eq("id", "main").single();
+      const { data: row, error } = await admin.from("workspace_state").select("data,updated_at").eq("id", "main").single();
       if (error) throw error;
       const synced = await syncAuthMembers(admin, row.data || {});
-      if (JSON.stringify(synced.members) !== JSON.stringify((row.data || {}).members)) await admin.from("workspace_state").update({ data: synced, updated_at: new Date().toISOString() }).eq("id", "main");
+      let version = row.updated_at;
+      if (JSON.stringify(synced.members) !== JSON.stringify((row.data || {}).members)) {
+        const { data: updated } = await admin.from("workspace_state").update({ data: synced, updated_at: new Date().toISOString() }).eq("id", "main").select("updated_at").single();
+        version = updated?.updated_at || version;
+      }
       const visible = filterWorkspace(synced, profile.email, isAdmin);
-      return respond({ data: await hydrateSignedUrls(admin, visible) });
+      return respond({ data: await hydrateSignedUrls(admin, visible), version });
     }
     if (action === "workspace_save") {
       if (!body.data || typeof body.data !== "object") return respond({ error: "اطلاعات نامعتبر است." }, 400);
-      const { data: row, error } = await admin.from("workspace_state").select("data").eq("id", "main").single();
+      const { data: row, error } = await admin.from("workspace_state").select("data,updated_at").eq("id", "main").single();
       if (error) throw error;
+      const expectedUpdatedAt = typeof body.expectedUpdatedAt === "string" ? body.expectedUpdatedAt : null;
+      if (expectedUpdatedAt && expectedUpdatedAt !== row.updated_at) return respond({ error: "نسخه جدیدتری از اطلاعات ذخیره شده است؛ صفحه را تازه‌سازی کنید تا اطلاعات همکاران بازنویسی نشود." }, 409);
       const current = (row.data || {}) as Record<string, unknown>;
       const submitted = body.data as Record<string, unknown>;
       const requiredCollections = ["tasks","personalTasks","notifications","transactions","clients","leads","contracts","projects","members","chats","letters","attendance","leaves","logs","events"];
@@ -239,13 +245,29 @@ Deno.serve(async (request) => {
       }
       if (isAdmin) {
         await admin.from("workspace_backups").insert({ workspace_id: "main", data: current, saved_by: profile.id });
-        const { data: oldBackups } = await admin.from("workspace_backups").select("id").eq("workspace_id", "main").order("created_at", { ascending: false }).range(50, 500);
+        const { data: oldBackups } = await admin.from("workspace_backups").select("id").eq("workspace_id", "main").order("created_at", { ascending: false }).range(500, 2000);
         if (oldBackups?.length) await admin.from("workspace_backups").delete().in("id", oldBackups.map((backup) => backup.id));
       }
-      const { error: saveError } = await admin.from("workspace_state").update({ data: next, updated_at: new Date().toISOString() }).eq("id", "main");
+      const { data: saved, error: saveError } = await admin.from("workspace_state").update({ data: next, updated_at: new Date().toISOString() }).eq("id", "main").select("updated_at").single();
       if (saveError) throw saveError;
       await admin.from("audit_logs").insert({ user_id: profile.id, action: "workspace_updated" });
-      return respond({ ok: true });
+      return respond({ ok: true, updatedAt: saved?.updated_at });
+    }
+    if (action === "workspace_recover") {
+      if (!isAdmin) return respond({ error: "فقط مدیر کل می‌تواند اطلاعات را بازیابی کند." }, 403);
+      const { data: currentRow, error: currentError } = await admin.from("workspace_state").select("data").eq("id", "main").single();
+      if (currentError) throw currentError;
+      const { data: backups, error: backupError } = await admin.from("workspace_backups").select("data,created_at").eq("workspace_id", "main").order("created_at", { ascending: false }).limit(500);
+      if (backupError) throw backupError;
+      const collections = ["tasks","personalTasks","transactions","clients","leads","contracts","projects","members","chats","letters","attendance","leaves","events"];
+      const score = (data: Record<string, unknown>) => collections.reduce((total, key) => total + (Array.isArray(data[key]) ? (data[key] as unknown[]).length : 0), 0);
+      const current = (currentRow.data || {}) as Record<string, unknown>;
+      const candidate = (backups || []).map((backup) => ({ ...backup, score: score((backup.data || {}) as Record<string, unknown>) })).sort((a,b) => b.score - a.score || String(b.created_at).localeCompare(String(a.created_at)))[0];
+      if (!candidate || candidate.score <= score(current)) return respond({ error: "نسخه کامل‌تری نسبت به اطلاعات فعلی در بکاپ‌ها پیدا نشد." }, 404);
+      await admin.from("workspace_backups").insert({ workspace_id: "main", data: current, saved_by: profile.id });
+      const { data: restored, error: restoreError } = await admin.from("workspace_state").update({ data: candidate.data, updated_at: new Date().toISOString() }).eq("id", "main").select("data,updated_at").single();
+      if (restoreError) throw restoreError;
+      return respond({ data: await hydrateSignedUrls(admin, restored.data), updatedAt: restored.updated_at });
     }
     if (action === "file_upload") {
       const fileName = String(body.fileName || "file").replace(/[^a-zA-Z0-9._-]/g, "_");

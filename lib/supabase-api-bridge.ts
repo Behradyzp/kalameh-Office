@@ -120,7 +120,11 @@ export function installSupabaseApiBridge() {
       }
       if (route === "/workspace" && method === "PUT") {
         const payload = JSON.parse(String(init?.body || "{}"));
-        const result = await invokeOfficeApi({ action: "workspace_save", data: payload.data });
+        const result = await invokeOfficeApi({ action: "workspace_save", data: payload.data, expectedUpdatedAt: payload.expectedUpdatedAt });
+        return jsonResponse(result.payload, result.status);
+      }
+      if (route === "/workspace/recover" && method === "POST") {
+        const result = await invokeOfficeApi({ action: "workspace_recover" });
         return jsonResponse(result.payload, result.status);
       }
       if (route === "/files" && method === "POST" && init?.body instanceof FormData) {

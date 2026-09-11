@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -776,6 +776,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: SignedInUser) => void }) {
 }
 
 export default function Home() {
+  const workspaceVersion = useRef<string | null>(null);
   const [view, setView] = useState<View>("dashboard"),
     [data, setData] = useState<Workspace>(seed),
     [ready, setReady] = useState(false),
@@ -851,6 +852,7 @@ export default function Home() {
             notifications: raw.notifications || [],
             events:raw.events||seed.events,
           };
+          workspaceVersion.current = typeof v.version === "string" ? v.version : null;
           setData(normalized);
           setFontScale(normalized.preferences.fontScale);
           setTheme(normalized.preferences.theme);
@@ -859,7 +861,7 @@ export default function Home() {
       })
       .catch((reason) => setLoadError(reason instanceof Error?reason.message:"دریافت اطلاعات از دیتابیس انجام نشد."));
   }, [authStatus,loadAttempt]);
-  useEffect(()=>{let active=true;const heartbeat=()=>fetch("api/session").then(r=>r.json()).then(({user})=>{if(!active)return;if(!user?.email){setAuthStatus("anonymous");setAuthUser(null);return}setAuthStatus("authenticated");setAuthUser(user);setCurrentEmail(user.email);setData(d=>({...d,members:d.members.map(m=>m.email.toLowerCase()===user.email.toLowerCase()?{...m,lastSeen:Date.now()}:m)}))}).catch(()=>active&&setAuthStatus("anonymous"));heartbeat();const timer=setInterval(heartbeat,60000);return()=>{active=false;clearInterval(timer)}},[]);
+  useEffect(()=>{let active=true;const heartbeat=()=>fetch("api/session").then(r=>r.json()).then(({user})=>{if(!active)return;if(!user?.email){setAuthStatus("anonymous");setAuthUser(null);return}setAuthStatus("authenticated");setAuthUser(user);setCurrentEmail(user.email)}).catch(()=>active&&setAuthStatus("anonymous"));heartbeat();const timer=setInterval(heartbeat,60000);return()=>{active=false;clearInterval(timer)}},[]);
   useEffect(() => {
     document.documentElement.style.fontSize = `${16 * fontScale}px`;
   }, [fontScale]);
@@ -870,8 +872,8 @@ export default function Home() {
         fetch("api/workspace", {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ data }),
-        }).then(async(response)=>{if(!response.ok){const result=await response.json().catch(()=>({}));throw new Error(result.error||"ذخیره اطلاعات انجام نشد.")}}).catch((reason) => toast.error(reason instanceof Error?reason.message:"ذخیره اطلاعات انجام نشد.")),
+          body: JSON.stringify({ data, expectedUpdatedAt: workspaceVersion.current }),
+        }).then(async(response)=>{const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||"ذخیره اطلاعات انجام نشد.");if(typeof result.updatedAt==="string")workspaceVersion.current=result.updatedAt}).catch((reason) => toast.error(reason instanceof Error?reason.message:"ذخیره اطلاعات انجام نشد.")),
       500,
     );
     return () => clearTimeout(t);
@@ -1464,6 +1466,14 @@ export default function Home() {
             {view === "settings" && (
               <SettingsV3
                 member={currentMember}
+                isAdmin={isAdmin}
+                onRecover={async()=>{
+                  const response=await fetch("api/workspace/recover",{method:"POST"});
+                  const result=await response.json().catch(()=>({}));
+                  if(!response.ok||!result.data)throw new Error(result.error||"بازیابی انجام نشد.");
+                  workspaceVersion.current=typeof result.updatedAt==="string"?result.updatedAt:null;
+                  setData(result.data as Workspace);
+                }}
                 onAvatar={(avatar) =>
                   patch(
                     "members",
@@ -8208,10 +8218,14 @@ function LeaveCenter({
 function SettingsV3({
   member,
   onAvatar,
+  isAdmin,
+  onRecover,
   ...settings
 }: {
   member: Member;
   onAvatar: (avatar: Attachment) => void;
+  isAdmin: boolean;
+  onRecover: () => Promise<void>;
   fontScale: number;
   setFontScale: (n: number) => void;
   theme: string;
@@ -8220,6 +8234,7 @@ function SettingsV3({
   onSave: (labels: LabelSettings) => void;
 }) {
   const [uploading, setUploading] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const upload = async (file: File) => {
     if (!file.type.startsWith("image/")) {
       toast.error("لطفاً یک فایل تصویری انتخاب کنید.");
@@ -8278,6 +8293,17 @@ function SettingsV3({
           />
         </label>
       </section>
+      {isAdmin && <section className="panel own-profile-settings">
+        <div className="own-profile-copy">
+          <span className="setting-icon"><HardDrive /></span>
+          <div><h2>بازیابی اطلاعات CRM</h2><p>آخرین نسخه پُرتر و سالم ذخیره‌شده در بکاپ‌ها را برگردانید.</p></div>
+        </div>
+        <Button variant="outline" disabled={recovering} onClick={async()=>{
+          if(!window.confirm("آخرین نسخه سالم اطلاعات بازیابی شود؟ از وضعیت فعلی هم بکاپ گرفته می‌شود."))return;
+          setRecovering(true);
+          try{await onRecover();toast.success("اطلاعات آخرین نسخه سالم بازیابی شد")}catch(reason){toast.error(reason instanceof Error?reason.message:"بازیابی انجام نشد.")}finally{setRecovering(false)}
+        }}><Archive />{recovering?"در حال بازیابی...":"بازیابی آخرین نسخه سالم"}</Button>
+      </section>}
     </>
   );
 }
