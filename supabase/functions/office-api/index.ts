@@ -324,11 +324,6 @@ Deno.serve(async (request) => {
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action || "");
     const isAdmin = profile.role === "admin";
-    const threeDaysAgo = new Date(
-      Date.now() - 3 * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    await admin.from("audit_logs").delete().lt("created_at", threeDaysAgo);
-
     if (action === "session") return respond({ user: profile });
     if (action === "workspace_get") {
       const { data: row, error } = await admin
@@ -582,6 +577,97 @@ Deno.serve(async (request) => {
         updatedAt: saved.updated_at,
         revision: saved.revision,
       });
+    }
+    if (action === "transactions_import") {
+      if (!Array.isArray(body.transactions) || !body.transactions.length)
+        return respond({ error: "سند مالی معتبری دریافت نشد." }, 400);
+      const submitted = body.transactions as Record<string, unknown>[];
+      const validTypes = new Set(["income", "expense", "receivable", "payable"]);
+      const validStatuses = new Set(["paid", "pending", "overdue"]);
+      if (
+        submitted.some(
+          (item) =>
+            !item ||
+            typeof item !== "object" ||
+            !String(item.title || "").trim() ||
+            !validTypes.has(String(item.type || "")) ||
+            !validStatuses.has(String(item.status || "")) ||
+            !Number.isFinite(Number(item.amount)) ||
+            Number(item.amount) <= 0 ||
+            !/^\d{4}\/\d{2}\/\d{2}$/.test(String(item.date || "")),
+        )
+      )
+        return respond({ error: "یکی از اسناد مالی نامعتبر است." }, 422);
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const { data: row, error } = await admin
+          .from("workspace_state")
+          .select("data,revision")
+          .eq("id", "main")
+          .single();
+        if (error) throw error;
+        const current = (row.data || {}) as Record<string, unknown>;
+        const member = (
+          (Array.isArray(current.members) ? current.members : []) as Record<
+            string,
+            unknown
+          >[]
+        ).find(
+          (candidate) =>
+            String(candidate.email || "").toLowerCase() ===
+            profile.email.toLowerCase(),
+        );
+        const permissions = new Set(
+          (Array.isArray(member?.permissions) ? member.permissions : []).map(String),
+        );
+        if (!isAdmin && !permissions.has("ویرایش مالی") && !permissions.has("مالی"))
+          return respond({ error: "دسترسی ویرایش مالی برای این حساب فعال نیست." }, 403);
+        const existing = (Array.isArray(current.transactions)
+          ? current.transactions
+          : []) as Record<string, unknown>[];
+        const identity = (item: Record<string, unknown>) =>
+          `${String(item.title || "").trim().toLowerCase()}|${String(item.project || "").trim().toLowerCase()}|${String(item.type || "")}|${Number(item.amount)}|${String(item.date || "")}`;
+        const seen = new Set(existing.map(identity));
+        const fresh = submitted.filter((item) => {
+          const key = identity(item);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        if (!fresh.length)
+          return respond({ error: "همه اسناد این فایل قبلاً ثبت شده‌اند." }, 409);
+        const next = { ...current, transactions: [...fresh, ...existing] };
+        const { error: backupError } = await admin
+          .from("workspace_backups")
+          .insert({ workspace_id: "main", data: current, saved_by: profile.id });
+        if (backupError)
+          return respond({ error: "بکاپ ایمن ساخته نشد؛ ورود اسناد متوقف شد." }, 503);
+        const { data: saved, error: saveError } = await admin
+          .from("workspace_state")
+          .update({
+            data: next,
+            updated_at: new Date().toISOString(),
+            revision: row.revision + 1,
+          })
+          .eq("id", "main")
+          .eq("revision", row.revision)
+          .select("data,updated_at,revision")
+          .maybeSingle();
+        if (saveError) throw saveError;
+        if (!saved) continue;
+        await admin.from("audit_logs").insert({
+          user_id: profile.id,
+          action: "transactions_imported",
+          metadata: { count: fresh.length },
+        });
+        return respond({
+          data: await hydrateSignedUrls(admin, filterWorkspace(saved.data, profile.email, isAdmin)),
+          importedCount: fresh.length,
+          updatedAt: saved.updated_at,
+          revision: saved.revision,
+        });
+      }
+      return respond({ error: "هم‌زمان تغییر دیگری ثبت شد؛ دوباره تلاش کنید." }, 409);
     }
     if (action === "workspace_recover") {
       if (!isAdmin)

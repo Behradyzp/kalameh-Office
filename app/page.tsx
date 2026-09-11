@@ -1792,7 +1792,7 @@ export default function Home() {
                     ),
                   )
                 }
-                onImport={(rows) => {
+                onImport={async (rows) => {
                   const identity = (row: Transaction) =>
                     `${row.title.trim().toLowerCase()}|${row.project.trim().toLowerCase()}|${row.type}|${row.amount}|${row.date}`;
                   const existing = new Set(data.transactions.map(identity));
@@ -1806,13 +1806,29 @@ export default function Home() {
                     toast.error("همه اسناد این فایل قبلاً ثبت شده‌اند.");
                     return;
                   }
-                  patch(
-                    "transactions",
-                    [...fresh, ...data.transactions],
-                    `${fresh.length} سند مالی را از اکسل وارد کرد`,
+                  const baseBeforeImport = data;
+                  const response = await fetch(
+                    "api/workspace/transactions/import",
+                    {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ transactions: fresh }),
+                    },
+                  );
+                  const result = await response.json().catch(() => ({}));
+                  if (!response.ok || !result.data)
+                    throw new Error(
+                      result.error || "ثبت اسناد در دیتابیس انجام نشد.",
+                    );
+                  const serverData = result.data as Workspace;
+                  workspaceRevision.current = Number(result.revision) || 0;
+                  workspaceVersion.current = String(result.updatedAt || "");
+                  lastSyncedWorkspace.current = serverData;
+                  setData((current) =>
+                    mergeWorkspace(baseBeforeImport, current, serverData),
                   );
                   toast.success(
-                    `${faDigits(String(fresh.length))} سند مالی ثبت شد`,
+                    `${faDigits(String(result.importedCount || fresh.length))} سند مالی در دیتابیس ذخیره شد`,
                   );
                 }}
               />
@@ -6544,7 +6560,7 @@ function FinanceV2({
   onEdit: (id: number) => void;
   onDelete: (id: number) => void;
   onStatus: (id: number, s: Transaction["status"]) => void;
-  onImport: (rows: Transaction[]) => void;
+  onImport: (rows: Transaction[]) => Promise<void>;
 }) {
   const [importing, setImporting] = useState(false);
   const months = Array.from(new Set(rows.map((r) => r.date.slice(0, 7))))
@@ -6618,7 +6634,7 @@ function FinanceV2({
                 const imported = await readFinancialExcel(file);
                 if (!imported.length)
                   throw new Error("ردیف معتبری در فایل پیدا نشد.");
-                onImport(imported);
+                await onImport(imported);
               } catch (reason) {
                 toast.error(
                   reason instanceof Error
