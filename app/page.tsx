@@ -751,6 +751,10 @@ const now = () =>
     minute: "2-digit",
     hour12: false,
   }).format(new Date());
+const newId = () => {
+  const values = crypto.getRandomValues(new Uint32Array(2));
+  return values[0] * 2_097_152 + (values[1] & 0x1fffff);
+};
 const initials = (name: string) =>
   name
     .split(" ")
@@ -1148,7 +1152,7 @@ export default function Home() {
           ? d.logs
           : [
               {
-                id: Date.now(),
+                id: newId(),
                 member: authUser?.name || "کاربر",
                 action: action || `بخش ${String(key)} را به‌روزرسانی کرد`,
                 time: `امروز، ${now()}`,
@@ -1169,7 +1173,7 @@ export default function Home() {
     setData((d) => ({
       ...d,
       notifications: [
-        { id: Date.now(), text, kind, time: `امروز، ${now()}` },
+        { id: newId(), text, kind, time: `امروز، ${now()}` },
         ...(d.notifications || []),
       ],
     }));
@@ -1276,7 +1280,7 @@ export default function Home() {
               messages: [
                 ...c.messages,
                 {
-                  id: Date.now(),
+                  id: newId(),
                   mine: true,
                   text: message.trim(),
                   time: now(),
@@ -1870,7 +1874,7 @@ export default function Home() {
                 onConvert={(lead) => {
                   patch("clients", [
                     {
-                      id: Date.now(),
+                      id: newId(),
                       name: lead.name,
                       company: lead.company,
                       phone: lead.phone,
@@ -1937,7 +1941,7 @@ export default function Home() {
                     "attendance",
                     [
                       {
-                        id: Date.now(),
+                        id: newId(),
                         memberId: currentMember?.id || 1,
                         date: todayJalali(),
                         checkIn: now(),
@@ -2506,7 +2510,7 @@ function CalendarCenter({
           e.preventDefault();
           const d = fd(e);
           onSave({
-            id: Date.now(),
+            id: newId(),
             title: d.title,
             date: d.date,
             time: d.time,
@@ -3266,7 +3270,7 @@ function GroupDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           name: d.name,
           group: true,
           members: ["مدیر نمونه", ...picked],
@@ -3324,7 +3328,7 @@ function LetterDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           subject: d.subject,
           from: "مدیر نمونه",
           to: d.to,
@@ -3426,7 +3430,7 @@ function ContractDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           title: d.title,
           client: d.client,
           date: d.date,
@@ -3849,7 +3853,7 @@ function TeamPro({
           e.preventDefault();
           const d = fd(e);
           onLeave({
-            id: Date.now(),
+            id: newId(),
             memberId: 1,
             from: d.from,
             to: d.to,
@@ -3952,7 +3956,7 @@ function ProjectDialogPro({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           title: d.title,
           color: "#012BF9",
           client: free ? null : d.client,
@@ -4071,7 +4075,7 @@ const readClientExcel = async (file: File, labels: string[]) => {
     ).trim();
   return rows
     .map((row, index): Client => ({
-      id: Date.now() + index,
+      id: newId() + index,
       name: value(row, "نام و نام خانوادگی", "نام مشتری", "name"),
       company: value(row, "نام شرکت", "شرکت", "company"),
       phone: value(row, "شماره تماس", "تلفن", "phone"),
@@ -4554,12 +4558,12 @@ function DirectMessageDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           name: d.member,
           group: false,
           members: ["مدیر نمونه", d.member],
           messages: d.message
-            ? [{ id: Date.now(), mine: true, text: d.message, time: now() }]
+            ? [{ id: newId(), mine: true, text: d.message, time: now() }]
             : [],
         });
       }}
@@ -5403,7 +5407,7 @@ function TaskDetailsModal({
       comments: [
         ...(task.comments || []),
         {
-          id: Date.now(),
+          id: newId(),
           author: "کاربر جاری",
           text: "فایل پیوست شد",
           time: `امروز، ${now()}`,
@@ -5419,7 +5423,7 @@ function TaskDetailsModal({
       comments: [
         ...(task.comments || []),
         {
-          id: Date.now(),
+          id: newId(),
           author: "کاربر جاری",
           text: comment.trim(),
           time: `امروز، ${now()}`,
@@ -6152,7 +6156,7 @@ function LeadDialogV2({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           name: d.name,
           company: d.company,
           phone: d.phone,
@@ -6470,7 +6474,7 @@ const readFinancialExcel = async (file: File) => {
       return;
     }
     imported.push({
-      id: Date.now() + index,
+      id: newId() + index,
       title,
       project,
       type,
@@ -6768,7 +6772,7 @@ function TaskDialogV4({
     if (!subtaskTitle.trim()) return;
     setSubtasks((v) => [
       ...v,
-      { id: Date.now(), title: subtaskTitle.trim(), done: false },
+      { id: newId(), title: subtaskTitle.trim(), done: false },
     ]);
     setSubtaskTitle("");
   };
@@ -7371,7 +7375,7 @@ function LeaveCenter({
           e.preventDefault();
           const d = fd(e);
           onSubmit({
-            id: Date.now(),
+            id: newId(),
             memberId: Number(d.memberId),
             from: d.from,
             to: d.to,
@@ -7643,7 +7647,7 @@ function PersonalTasksPanelV2({
     if (!title.trim()) return;
     save([
       {
-        id: Date.now(),
+        id: newId(),
         title: title.trim(),
         date,
         repeat,

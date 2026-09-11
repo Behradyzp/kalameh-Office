@@ -42,3 +42,23 @@ test("replays additions, edits and deletions by id", () => {
     ],
   });
 });
+
+test("keeps simultaneous attendance records from different employees", () => {
+  const base = { attendance: [] };
+  const employeeOne = {
+    attendance: [
+      { id: 101, memberId: 1, date: "۱۴۰۵/۰۶/۲۰", checkIn: "۰۹:۰۰" },
+    ],
+  };
+  const employeeTwoSaved = {
+    attendance: [
+      { id: 202, memberId: 2, date: "۱۴۰۵/۰۶/۲۰", checkIn: "۰۹:۰۱" },
+    ],
+  };
+  assert.deepEqual(mergeWorkspace(base, employeeOne, employeeTwoSaved), {
+    attendance: [
+      { id: 202, memberId: 2, date: "۱۴۰۵/۰۶/۲۰", checkIn: "۰۹:۰۱" },
+      { id: 101, memberId: 1, date: "۱۴۰۵/۰۶/۲۰", checkIn: "۰۹:۰۰" },
+    ],
+  });
+});
