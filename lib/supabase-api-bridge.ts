@@ -193,6 +193,7 @@ export function installSupabaseApiBridge() {
           action: "workspace_save",
           data: payload.data,
           expectedRevision: payload.expectedRevision,
+          expectedUpdatedAt: payload.expectedUpdatedAt,
         });
         return jsonResponse(result.payload, result.status);
       }

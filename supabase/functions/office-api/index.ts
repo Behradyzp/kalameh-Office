@@ -374,10 +374,15 @@ Deno.serve(async (request) => {
         .single();
       if (error) throw error;
       const expectedRevision = Number(body.expectedRevision);
-      if (
-        !Number.isSafeInteger(expectedRevision) ||
-        expectedRevision !== row.revision
-      ) {
+      const hasExpectedRevision = Number.isSafeInteger(expectedRevision);
+      const expectedUpdatedAt =
+        typeof body.expectedUpdatedAt === "string"
+          ? body.expectedUpdatedAt
+          : "";
+      const matchesCurrentVersion = hasExpectedRevision
+        ? expectedRevision === row.revision
+        : Boolean(expectedUpdatedAt) && expectedUpdatedAt === row.updated_at;
+      if (!matchesCurrentVersion) {
         return respond(
           {
             error: "نسخه جدیدتری از اطلاعات ذخیره شده است.",
@@ -549,20 +554,6 @@ Deno.serve(async (request) => {
           },
           503,
         );
-      const { data: oldBackups } = await admin
-        .from("workspace_backups")
-        .select("id")
-        .eq("workspace_id", "main")
-        .order("created_at", { ascending: false })
-        .range(500, 2000);
-      if (oldBackups?.length)
-        await admin
-          .from("workspace_backups")
-          .delete()
-          .in(
-            "id",
-            oldBackups.map((backup) => backup.id),
-          );
       const { data: saved, error: saveError } = await admin
         .from("workspace_state")
         .update({

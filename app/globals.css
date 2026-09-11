@@ -311,6 +311,12 @@ button {
   padding: 0 13px;
   color: #90a4ae;
 }
+.global-search > svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: block;
+}
 .global-search input,
 .search-box input,
 .chat-input input {

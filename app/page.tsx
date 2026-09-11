@@ -871,6 +871,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: SignedInUser) => void }) {
 
 export default function Home() {
   const workspaceRevision = useRef(0);
+  const workspaceVersion = useRef("");
   const lastSyncedWorkspace = useRef<Workspace | null>(null);
   const pendingWorkspace = useRef<Workspace | null>(null);
   const saveInFlight = useRef(false);
@@ -972,6 +973,7 @@ export default function Home() {
           workspaceRevision.current = Number.isSafeInteger(v.revision)
             ? v.revision
             : 0;
+          workspaceVersion.current = String(v.version || "");
           lastSyncedWorkspace.current = normalized;
           let restored = normalized;
           try {
@@ -1037,6 +1039,7 @@ export default function Home() {
     return {
       data: result.data as Workspace,
       revision: Number(result.revision) || 0,
+      version: String(result.version || ""),
     };
   }
 
@@ -1060,6 +1063,7 @@ export default function Home() {
               body: JSON.stringify({
                 data: snapshot,
                 expectedRevision: workspaceRevision.current,
+                expectedUpdatedAt: workspaceVersion.current,
               }),
             });
             const result = await response.json().catch(() => ({}));
@@ -1070,6 +1074,7 @@ export default function Home() {
               base = newest.data;
               lastSyncedWorkspace.current = newest.data;
               workspaceRevision.current = newest.revision;
+              workspaceVersion.current = newest.version;
               if (pendingWorkspace.current) {
                 pendingWorkspace.current = mergeWorkspace(
                   localBeforeMerge,
@@ -1085,6 +1090,7 @@ export default function Home() {
             if (!response.ok)
               throw new Error(result.error || "ذخیره اطلاعات انجام نشد.");
             workspaceRevision.current = Number(result.revision);
+            workspaceVersion.current = String(result.updatedAt || "");
             lastSyncedWorkspace.current = snapshot;
             saved = true;
           } catch (reason) {
@@ -2065,6 +2071,7 @@ export default function Home() {
                     throw new Error(result.error || "بازیابی انجام نشد.");
                   workspaceRevision.current =
                     Number(result.revision) || workspaceRevision.current + 1;
+                  workspaceVersion.current = String(result.updatedAt || "");
                   lastSyncedWorkspace.current = result.data as Workspace;
                   pendingWorkspace.current = null;
                   clearPendingWorkspace();

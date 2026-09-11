@@ -27,6 +27,15 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+      - name: Block destructive database migrations
+        shell: bash
+        run: |
+          if grep -ERin --include='*.sql' \
+            '(^|[[:space:];])(drop[[:space:]]+table|truncate([[:space:]]+table)?|delete[[:space:]]+from|alter[[:space:]]+table[^;]*drop[[:space:]]+column)([[:space:];]|$)' \
+            supabase/migrations; then
+            echo "::error::انتشار متوقف شد: migration مخرب شناسایی شد. تغییرات حذف داده باید جداگانه و با تأیید صریح انجام شوند."
+            exit 1
+          fi
       - name: Validate Supabase credentials
         shell: bash
         run: |
