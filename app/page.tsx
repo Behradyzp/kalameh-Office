@@ -280,7 +280,12 @@ type AppNotification = {
   time: string;
   kind: "client" | "lead" | "project" | "task";
 };
-type LabelSettings = { tasks: string[]; clients: string[]; leads: string[] };
+type LabelSettings = {
+  projects: string[];
+  tasks: string[];
+  clients: string[];
+  leads: string[];
+};
 type Preferences = { fontScale: number; theme: string; labels?: LabelSettings };
 type Workspace = {
   tasks: Task[];
@@ -356,6 +361,7 @@ const defaultProjectTabs: ProjectTab[] = [
   { id: "members", title: "اعضای پروژه", kind: "members" },
 ];
 const defaultLabels: LabelSettings = {
+  projects: ["سئو سایت", "طراحی سایت", "گرافیک", "پکیج کامل", "پشتیبانی سایت"],
   tasks: ["سئو", "فنی", "طراحی", "گزارش", "عمومی"],
   clients: ["سئو سایت", "طراحی سایت", "پشتیبانی سایت", "گرافیک", "تولید محتوا"],
   leads: ["سئو سایت", "طراحی سایت", "کمپین تبلیغاتی", "شبکه‌های اجتماعی"],
@@ -951,7 +957,14 @@ export default function Home() {
             attendance: raw.attendance || [],
             leaves: raw.leaves || [],
             logs: raw.logs || [],
-            preferences: raw.preferences || seed.preferences,
+            preferences: {
+              ...seed.preferences,
+              ...raw.preferences,
+              labels: {
+                ...defaultLabels,
+                ...raw.preferences?.labels,
+              },
+            },
             personalTasks: raw.personalTasks || seed.personalTasks,
             notifications: raw.notifications || [],
             events: raw.events || seed.events,
@@ -2118,6 +2131,7 @@ export default function Home() {
         close={() => setDialog(null)}
         clients={data.clients}
         members={data.members}
+        labels={data.preferences.labels?.projects || defaultLabels.projects}
         free={freeProject}
         setFree={setFreeProject}
         save={(p) => {
@@ -2390,6 +2404,9 @@ export default function Home() {
         project={selectedProject}
         clients={data.clients}
         members={data.members}
+        serviceLabels={
+          data.preferences.labels?.projects || defaultLabels.projects
+        }
         save={(p) => {
           patch(
             "projects",
@@ -3921,6 +3938,7 @@ function ProjectDialogPro({
   close,
   clients,
   members,
+  labels,
   free,
   setFree,
   save,
@@ -3929,6 +3947,7 @@ function ProjectDialogPro({
   close: () => void;
   clients: Client[];
   members: Member[];
+  labels: string[];
   free: boolean;
   setFree: (v: boolean) => void;
   save: (p: Project) => void;
@@ -4014,10 +4033,9 @@ function ProjectDialogPro({
         </Field>
         <Field label="نوع خدمت" name="service">
           <select name="service">
-            <option>سئو سایت</option>
-            <option>طراحی سایت</option>
-            <option>گرافیک</option>
-            <option>تولید محتوا</option>
+            {labels.map((label) => (
+              <option key={label}>{label}</option>
+            ))}
           </select>
         </Field>
         <Field label="مدیر پروژه" name="manager">
@@ -4710,6 +4728,7 @@ function ProjectSettingsV3({
   project,
   clients,
   members,
+  serviceLabels,
   save,
 }: {
   open: boolean;
@@ -4717,6 +4736,7 @@ function ProjectSettingsV3({
   project: Project | null;
   clients: Client[];
   members: Member[];
+  serviceLabels: string[];
   save: (p: Project) => void;
 }) {
   const palette = ["#90a4ae", "#42a5f5", "#8b6ee8", "#f2a93b", "#26a69a"];
@@ -4827,7 +4847,16 @@ function ProjectSettingsV3({
             ))}
           </select>
         </Field>
-        <Field label="خدمت" name="service" defaultValue={project.service} />
+        <Field label="خدمت" name="service">
+          <select name="service" defaultValue={project.service}>
+            {!serviceLabels.includes(project.service) && (
+              <option>{project.service}</option>
+            )}
+            {serviceLabels.map((label) => (
+              <option key={label}>{label}</option>
+            ))}
+          </select>
+        </Field>
         <Field label="مدیر پروژه" name="manager">
           <select name="manager" defaultValue={project.manager}>
             {members.map((m) => (
@@ -5873,6 +5902,7 @@ function SettingsV2({
 }) {
   const [draft, setDraft] = useState<LabelSettings>(labels),
     [inputs, setInputs] = useState<LabelSettings>({
+      projects: [],
       tasks: [],
       clients: [],
       leads: [],
@@ -5893,6 +5923,12 @@ function SettingsV2({
     hint: string;
     icon: typeof ListChecks;
   }[] = [
+    {
+      key: "projects",
+      title: "نوع خدمت پروژه‌ها",
+      hint: "گزینه‌های فرم ساخت و تنظیمات پروژه",
+      icon: FolderKanban,
+    },
     {
       key: "tasks",
       title: "برچسب‌های تسک‌ها",
