@@ -20,7 +20,8 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      SUPABASE_PROJECT_ID: khcvfklaafyuzafunwtf
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID || 'khcvfklaafyuzafunwtf' }}
+      SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
@@ -33,15 +34,31 @@ jobs:
             echo "::error::SUPABASE_ACCESS_TOKEN ثبت نشده یا فرمت آن نادرست است؛ توکن باید با sbp_ شروع شود."
             exit 1
           fi
-          if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
-            echo "::error::SUPABASE_DB_PASSWORD ثبت نشده است."
+          if [[ -z "$SUPABASE_DB_PASSWORD" || -z "$SUPABASE_PROJECT_ID" || -z "$SUPABASE_ANON_KEY" ]]; then
+            echo "::error::یکی از Secretهای الزامی Supabase ثبت نشده است."
             exit 1
           fi
           if ! supabase projects list --output json >/dev/null; then
             echo "::error::Access Token معتبر نیست یا به پروژه Supabase دسترسی ندارد. یک توکن تازه از همان حساب پروژه بسازید."
             exit 1
           fi
-      - name: Apply database migration
+      - name: Apply all database migrations
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PGSSLMODE: require
+        run: |
+          for migration in supabase/migrations/*.sql; do
+            psql \
+              --host=aws-0-ap-southeast-2.pooler.supabase.com \
+              --port=5432 \
+              --username="postgres.${SUPABASE_PROJECT_ID}" \
+              --dbname=postgres \
+              --set=ON_ERROR_STOP=1 \
+              --file="$migration"
+          done
+      - name: Deploy secure API function
+        run: supabase functions deploy office-api --project-ref "$SUPABASE_PROJECT_ID"
+      - name: Verify database backup and atomic revision
         env:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PGSSLMODE: require
@@ -49,14 +66,38 @@ jobs:
           psql \
             --host=aws-0-ap-southeast-2.pooler.supabase.com \
             --port=5432 \
-            --username=postgres.khcvfklaafyuzafunwtf \
+            --username="postgres.${SUPABASE_PROJECT_ID}" \
             --dbname=postgres \
-            --set=ON_ERROR_STOP=1 \
-            --file=supabase/migrations/202609100001_kalameh_office.sql
-      - name: Deploy secure API function
-        run: supabase functions deploy office-api --project-ref khcvfklaafyuzafunwtf
+            --set=ON_ERROR_STOP=1 <<'SQL'
+          begin;
+          insert into public.workspace_backups (workspace_id, data)
+            select id, data from public.workspace_state where id = 'main';
+          update public.workspace_state
+            set revision = revision + 1
+            where id = 'main';
+          do $$
+          begin
+            if not exists (select 1 from public.workspace_backups where workspace_id = 'main') then
+              raise exception 'Backup verification failed';
+            end if;
+            if not exists (select 1 from public.workspace_state where id = 'main' and revision >= 1) then
+              raise exception 'Revision verification failed';
+            end if;
+          end $$;
+          rollback;
+          SQL
+      - name: Verify deployed API authentication
+        run: |
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${SUPABASE_ANON_KEY}" \
+            --header "Content-Type: application/json" \
+            --data '{"action":"session"}' \
+            "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/office-api")
+          test "$status" = "401"
 
   pages:
+    needs: supabase
     runs-on: ubuntu-latest
     environment:
       name: github-pages
