@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { mergeWorkspace } from "@/lib/workspace-sync";
 import {
   Activity,
   Archive,
@@ -32,7 +33,6 @@ import {
   Mail,
   Menu,
   MessageCircle,
-  MessageSquare,
   MoreVertical,
   Paperclip,
   Plus,
@@ -118,7 +118,13 @@ type View =
 type TaskStatus =
   "backlog" | "doing" | "stage3" | "stage4" | "stage5" | "done" | "cancelled";
 type Subtask = { id: number; title: string; done: boolean };
-type TaskComment={id:number;author:string;text:string;time:string;attachment?:Attachment};
+type TaskComment = {
+  id: number;
+  author: string;
+  text: string;
+  time: string;
+  attachment?: Attachment;
+};
 type Task = {
   id: number;
   title: string;
@@ -133,7 +139,7 @@ type Task = {
   status: TaskStatus;
   progress: number;
   subtasks?: Subtask[];
-  comments?:TaskComment[];
+  comments?: TaskComment[];
 };
 type PersonalTask = {
   id: number;
@@ -197,8 +203,8 @@ type Project = {
   tabs?: ProjectTab[];
   workflowColumns?: WorkflowColumn[];
   logo?: Attachment;
-  files?:Attachment[];
-  ownerId?:number;
+  files?: Attachment[];
+  ownerId?: number;
 };
 type Member = {
   id: number;
@@ -208,10 +214,22 @@ type Member = {
   status: "فعال" | "غیرفعال";
   permissions: string[];
   avatar?: Attachment;
-  lastSeen?:number;
+  lastSeen?: number;
 };
-type Attachment = { name: string; url: string; type: string };
-type CalendarEvent={id:number;title:string;date:string;time:string;type:"جلسه"|"ددلاین"|"یادآوری";project?:string};
+type Attachment = {
+  name: string;
+  url: string;
+  type: string;
+  storagePath?: string;
+};
+type CalendarEvent = {
+  id: number;
+  title: string;
+  date: string;
+  time: string;
+  type: "جلسه" | "ددلاین" | "یادآوری";
+  project?: string;
+};
 type Chat = {
   id: number;
   name: string;
@@ -249,7 +267,13 @@ type Leave = {
   reason: string;
   status: "در انتظار" | "تأیید شده" | "رد شده";
 };
-type AuditLog = { id: number; member: string; action: string; time: string; createdAt?: number };
+type AuditLog = {
+  id: number;
+  member: string;
+  action: string;
+  time: string;
+  createdAt?: number;
+};
 type AppNotification = {
   id: number;
   text: string;
@@ -273,7 +297,7 @@ type Workspace = {
   attendance: Attendance[];
   leaves: Leave[];
   logs: AuditLog[];
-  events:CalendarEvent[];
+  events: CalendarEvent[];
   preferences: Preferences;
 };
 
@@ -397,7 +421,16 @@ const membersSeed: Member[] = [
   },
 ];
 const seed: Workspace = {
-  events:[{id:1,title:"جلسه گزارش ماهانه پروژه نمونه",date:"۱۴۰۵/۰۶/۲۰",time:"۱۱:۰۰",type:"جلسه",project:"پروژه نمونه آلفا"}],
+  events: [
+    {
+      id: 1,
+      title: "جلسه گزارش ماهانه پروژه نمونه",
+      date: "۱۴۰۵/۰۶/۲۰",
+      time: "۱۱:۰۰",
+      type: "جلسه",
+      project: "پروژه نمونه آلفا",
+    },
+  ],
   notifications: [],
   personalTasks: [
     {
@@ -687,9 +720,7 @@ const money = (n: number) =>
   `${new Intl.NumberFormat("fa-IR").format(n)} تومان`;
 const TEHRAN_TIME_ZONE = "Asia/Tehran";
 const latinDigits = (value: string) =>
-  value.replace(/[۰-۹]/g, (digit) =>
-    String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)),
-  );
+  value.replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)));
 const jalaliDateParts = (date = new Date()) => {
   const parts = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
     timeZone: TEHRAN_TIME_ZONE,
@@ -720,12 +751,32 @@ const now = () =>
     minute: "2-digit",
     hour12: false,
   }).format(new Date());
+const newId = () => {
+  const values = crypto.getRandomValues(new Uint32Array(2));
+  return values[0] * 2_097_152 + (values[1] & 0x1fffff);
+};
 const initials = (name: string) =>
   name
     .split(" ")
     .slice(0, 2)
     .map((x) => x[0])
     .join("");
+
+const pendingWorkspaceKey = "kalameh-office-pending-workspace";
+const storePendingWorkspace = (base: Workspace | null, local: Workspace) => {
+  try {
+    localStorage.setItem(pendingWorkspaceKey, JSON.stringify({ base, local }));
+  } catch {
+    // The server remains authoritative; browser draft storage is an extra safety net.
+  }
+};
+const clearPendingWorkspace = () => {
+  try {
+    localStorage.removeItem(pendingWorkspaceKey);
+  } catch {
+    // Storage can be disabled by browser privacy settings.
+  }
+};
 
 type SignedInUser = { id: string; email: string; name: string; role: string };
 
@@ -736,55 +787,101 @@ function LoginScreen({ onLogin }: { onLogin: (user: SignedInUser) => void }) {
     <main className="login-screen" dir="rtl">
       <section className="login-card">
         <div className="login-brand">
-          <img src="/kalameh-logo.png" alt="آژانس تبلیغاتی کلمه" />
+          <img src="./kalameh-logo.png" alt="آژانس تبلیغاتی کلمه" />
           <span>دفتر کلمه</span>
         </div>
         <div className="login-copy">
-          <span className="login-icon"><LockKeyhole /></span>
+          <span className="login-icon">
+            <LockKeyhole />
+          </span>
           <h1>ورود به میزکار</h1>
           <p>با ایمیل و رمز عبوری که مدیر برای شما ساخته است وارد شوید.</p>
         </div>
-        <form onSubmit={async (event) => {
-          event.preventDefault();
-          setSubmitting(true);
-          setError("");
-          const form = new FormData(event.currentTarget);
-          try {
-            const response = await fetch("api/auth/login", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
-            });
-            const result = await response.json() as { user?: SignedInUser; error?: string };
-            if (!response.ok || !result.user) throw new Error(result.error || "ورود انجام نشد.");
-            onLogin(result.user);
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "ورود انجام نشد.");
-          } finally {
-            setSubmitting(false);
-          }
-        }}>
-          <label>ایمیل سازمانی<Input name="email" type="email" autoComplete="email" required placeholder="name@kalameh.agency" /></label>
-          <label>رمز عبور<Input name="password" type="password" autoComplete="current-password" required minLength={8} placeholder="رمز عبور" /></label>
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setSubmitting(true);
+            setError("");
+            const form = new FormData(event.currentTarget);
+            try {
+              const response = await fetch("api/auth/login", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  email: form.get("email"),
+                  password: form.get("password"),
+                }),
+              });
+              const result = (await response.json()) as {
+                user?: SignedInUser;
+                error?: string;
+              };
+              if (!response.ok || !result.user)
+                throw new Error(result.error || "ورود انجام نشد.");
+              onLogin(result.user);
+            } catch (reason) {
+              setError(
+                reason instanceof Error ? reason.message : "ورود انجام نشد.",
+              );
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          <label>
+            ایمیل سازمانی
+            <Input
+              name="email"
+              type="email"
+              autoComplete="email"
+              required
+              placeholder="name@kalameh.agency"
+            />
+          </label>
+          <label>
+            رمز عبور
+            <Input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              minLength={8}
+              placeholder="رمز عبور"
+            />
+          </label>
           {error && <p className="login-error">{error}</p>}
-          <Button type="submit" disabled={submitting}>{submitting ? "در حال ورود..." : "ورود به پنل"}<ArrowLeft /></Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? "در حال ورود..." : "ورود به پنل"}
+            <ArrowLeft />
+          </Button>
         </form>
-        <small>دسترسی شما بر اساس نقش تعیین‌شده توسط مدیر نمایش داده می‌شود.</small>
+        <small>
+          دسترسی شما بر اساس نقش تعیین‌شده توسط مدیر نمایش داده می‌شود.
+        </small>
       </section>
     </main>
   );
 }
 
 export default function Home() {
-  const workspaceVersion = useRef<string | null>(null);
+  const workspaceRevision = useRef(0);
+  const lastSyncedWorkspace = useRef<Workspace | null>(null);
+  const pendingWorkspace = useRef<Workspace | null>(null);
+  const saveInFlight = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [view, setView] = useState<View>("dashboard"),
     [data, setData] = useState<Workspace>(seed),
     [ready, setReady] = useState(false),
     [query, setQuery] = useState(""),
     [fontScale, setFontScale] = useState(1),
     [theme, setTheme] = useState("violet"),
-    [loadError,setLoadError]=useState(""),
-    [loadAttempt,setLoadAttempt]=useState(0);
+    [loadError, setLoadError] = useState(""),
+    [loadAttempt, setLoadAttempt] = useState(0),
+    [saveAttempt, setSaveAttempt] = useState(0),
+    [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">(
+      "saved",
+    ),
+    [saveError, setSaveError] = useState("");
   const [dialog, setDialog] = useState<
       | null
       | "project"
@@ -810,15 +907,22 @@ export default function Home() {
     [chatFile, setChatFile] = useState<Attachment | null>(null),
     [freeProject, setFreeProject] = useState(false),
     [dragged, setDragged] = useState<number | null>(null),
-    [currentEmail,setCurrentEmail]=useState(""),
-    [authStatus,setAuthStatus]=useState<"loading"|"authenticated"|"anonymous">("loading"),
-    [authUser,setAuthUser]=useState<SignedInUser|null>(null);
+    [currentEmail, setCurrentEmail] = useState(""),
+    [authStatus, setAuthStatus] = useState<
+      "loading" | "authenticated" | "anonymous"
+    >("loading"),
+    [authUser, setAuthUser] = useState<SignedInUser | null>(null);
   useEffect(() => {
-    if(authStatus!=="authenticated")return;
-    setReady(false);
-    setLoadError("");
+    if (authStatus !== "authenticated") return;
     fetch("api/workspace")
-      .then(async(r) => {const payload=await r.json();if(!r.ok||!payload?.data)throw new Error(payload?.error||"دریافت اطلاعات از دیتابیس انجام نشد.");return payload})
+      .then(async (r) => {
+        const payload = await r.json();
+        if (!r.ok || !payload?.data)
+          throw new Error(
+            payload?.error || "دریافت اطلاعات از دیتابیس انجام نشد.",
+          );
+        return payload;
+      })
       .then((v) => {
         if (v?.data) {
           const raw = v.data as Partial<Workspace>;
@@ -850,34 +954,191 @@ export default function Home() {
             preferences: raw.preferences || seed.preferences,
             personalTasks: raw.personalTasks || seed.personalTasks,
             notifications: raw.notifications || [],
-            events:raw.events||seed.events,
+            events: raw.events || seed.events,
           };
-          workspaceVersion.current = typeof v.version === "string" ? v.version : null;
-          setData(normalized);
-          setFontScale(normalized.preferences.fontScale);
-          setTheme(normalized.preferences.theme);
+          workspaceRevision.current = Number.isSafeInteger(v.revision)
+            ? v.revision
+            : 0;
+          lastSyncedWorkspace.current = normalized;
+          let restored = normalized;
+          try {
+            const pending = localStorage.getItem(pendingWorkspaceKey);
+            if (pending) {
+              const draft = JSON.parse(pending) as {
+                base?: Workspace;
+                local?: Workspace;
+              };
+              if (draft.base && draft.local)
+                restored = mergeWorkspace(draft.base, draft.local, normalized);
+            }
+          } catch {
+            clearPendingWorkspace();
+          }
+          setData(restored);
+          setFontScale(restored.preferences.fontScale);
+          setTheme(restored.preferences.theme);
         }
         setReady(true);
       })
-      .catch((reason) => setLoadError(reason instanceof Error?reason.message:"دریافت اطلاعات از دیتابیس انجام نشد."));
-  }, [authStatus,loadAttempt]);
-  useEffect(()=>{let active=true;const heartbeat=()=>fetch("api/session").then(r=>r.json()).then(({user})=>{if(!active)return;if(!user?.email){setAuthStatus("anonymous");setAuthUser(null);return}setAuthStatus("authenticated");setAuthUser(user);setCurrentEmail(user.email)}).catch(()=>active&&setAuthStatus("anonymous"));heartbeat();const timer=setInterval(heartbeat,60000);return()=>{active=false;clearInterval(timer)}},[]);
+      .catch((reason) =>
+        setLoadError(
+          reason instanceof Error
+            ? reason.message
+            : "دریافت اطلاعات از دیتابیس انجام نشد.",
+        ),
+      );
+  }, [authStatus, loadAttempt]);
+  useEffect(() => {
+    let active = true;
+    const heartbeat = () =>
+      fetch("api/session")
+        .then((r) => r.json())
+        .then(({ user }) => {
+          if (!active) return;
+          if (!user?.email) {
+            setAuthStatus("anonymous");
+            setAuthUser(null);
+            return;
+          }
+          setAuthStatus("authenticated");
+          setAuthUser(user);
+          setCurrentEmail(user.email);
+        })
+        .catch(() => active && setAuthStatus("anonymous"));
+    heartbeat();
+    const timer = setInterval(heartbeat, 60000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
   useEffect(() => {
     document.documentElement.style.fontSize = `${16 * fontScale}px`;
   }, [fontScale]);
+
+  async function loadLatestWorkspace() {
+    const response = await fetch("api/workspace", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok || !result?.data)
+      throw new Error(result?.error || "دریافت نسخه جدید اطلاعات انجام نشد.");
+    return {
+      data: result.data as Workspace,
+      revision: Number(result.revision) || 0,
+    };
+  }
+
+  async function drainWorkspaceSaves() {
+    if (saveInFlight.current || !pendingWorkspace.current) return;
+    saveInFlight.current = true;
+    let failed = false;
+    setSaveStatus("saving");
+    setSaveError("");
+    try {
+      while (pendingWorkspace.current) {
+        let snapshot: Workspace = pendingWorkspace.current;
+        pendingWorkspace.current = null;
+        let base = lastSyncedWorkspace.current || snapshot;
+        let saved = false;
+        for (let attempt = 0; attempt < 4 && !saved; attempt += 1) {
+          try {
+            const response = await fetch("api/workspace", {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                data: snapshot,
+                expectedRevision: workspaceRevision.current,
+              }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (response.status === 409) {
+              const newest = await loadLatestWorkspace();
+              const localBeforeMerge: Workspace = snapshot;
+              snapshot = mergeWorkspace(base, snapshot, newest.data);
+              base = newest.data;
+              lastSyncedWorkspace.current = newest.data;
+              workspaceRevision.current = newest.revision;
+              if (pendingWorkspace.current) {
+                pendingWorkspace.current = mergeWorkspace(
+                  localBeforeMerge,
+                  pendingWorkspace.current,
+                  snapshot,
+                );
+              }
+              setData((current) =>
+                mergeWorkspace(localBeforeMerge, current, snapshot),
+              );
+              continue;
+            }
+            if (!response.ok)
+              throw new Error(result.error || "ذخیره اطلاعات انجام نشد.");
+            workspaceRevision.current = Number(result.revision);
+            lastSyncedWorkspace.current = snapshot;
+            saved = true;
+          } catch (reason) {
+            if (attempt === 3) throw reason;
+            await new Promise((resolve) =>
+              setTimeout(resolve, 600 * 2 ** attempt),
+            );
+          }
+        }
+        if (pendingWorkspace.current) {
+          storePendingWorkspace(
+            lastSyncedWorkspace.current,
+            pendingWorkspace.current,
+          );
+        } else {
+          clearPendingWorkspace();
+        }
+      }
+      setSaveStatus("saved");
+    } catch (reason) {
+      failed = true;
+      if (!pendingWorkspace.current) pendingWorkspace.current = data;
+      setSaveStatus("error");
+      setSaveError(
+        reason instanceof Error ? reason.message : "ذخیره اطلاعات انجام نشد.",
+      );
+    } finally {
+      saveInFlight.current = false;
+      if (pendingWorkspace.current && !failed) void drainWorkspaceSaves();
+    }
+  }
+
   useEffect(() => {
-    if (!ready || authStatus!=="authenticated") return;
-    const t = setTimeout(
-      () =>
-        fetch("api/workspace", {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ data, expectedUpdatedAt: workspaceVersion.current }),
-        }).then(async(response)=>{const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||"ذخیره اطلاعات انجام نشد.");if(typeof result.updatedAt==="string")workspaceVersion.current=result.updatedAt}).catch((reason) => toast.error(reason instanceof Error?reason.message:"ذخیره اطلاعات انجام نشد.")),
-      500,
-    );
-    return () => clearTimeout(t);
-  }, [data, ready, authStatus]);
+    if (!ready || authStatus !== "authenticated") return;
+    if (
+      lastSyncedWorkspace.current &&
+      JSON.stringify(data) === JSON.stringify(lastSyncedWorkspace.current)
+    )
+      return;
+    pendingWorkspace.current = data;
+    setSaveStatus("saving");
+    storePendingWorkspace(lastSyncedWorkspace.current, data);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void drainWorkspaceSaves(), 500);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+    // The save worker is intentionally ref-driven so renders cannot start overlapping requests.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, ready, authStatus, saveAttempt]);
+  useEffect(() => {
+    const retry = () => {
+      if (pendingWorkspace.current) void drainWorkspaceSaves();
+    };
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      if (!pendingWorkspace.current && !saveInFlight.current) return;
+      event.preventDefault();
+    };
+    window.addEventListener("online", retry);
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.removeEventListener("beforeunload", warnBeforeLeaving);
+    };
+    // Online/unload listeners must be registered once; the worker reads current refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const patch = <K extends keyof Workspace>(
     key: K,
     value: Workspace[K],
@@ -891,13 +1152,17 @@ export default function Home() {
           ? d.logs
           : [
               {
-                id: Date.now(),
+                id: newId(),
                 member: authUser?.name || "کاربر",
                 action: action || `بخش ${String(key)} را به‌روزرسانی کرد`,
                 time: `امروز، ${now()}`,
                 createdAt: Date.now(),
               },
-              ...(d.logs || []).filter((log) => !log.createdAt || Date.now() - log.createdAt < 3 * 24 * 60 * 60 * 1000),
+              ...(d.logs || []).filter(
+                (log) =>
+                  !log.createdAt ||
+                  Date.now() - log.createdAt < 3 * 24 * 60 * 60 * 1000,
+              ),
             ],
     }));
   const openCreate = (name: Exclude<typeof dialog, null>) => {
@@ -908,7 +1173,7 @@ export default function Home() {
     setData((d) => ({
       ...d,
       notifications: [
-        { id: Date.now(), text, kind, time: `امروز، ${now()}` },
+        { id: newId(), text, kind, time: `امروز، ${now()}` },
         ...(d.notifications || []),
       ],
     }));
@@ -934,10 +1199,53 @@ export default function Home() {
     }),
     [data.transactions],
   );
-  if(authStatus==="loading")return <main className="login-screen" dir="rtl"><div className="login-loading"><img src="/kalameh-logo.png" alt=""/><span>در حال آماده‌سازی میزکار...</span></div></main>;
-  if(authStatus==="anonymous")return <LoginScreen onLogin={(user)=>{setAuthUser(user);setCurrentEmail(user.email);setAuthStatus("authenticated")}}/>;
-  if(loadError)return <main className="login-screen" dir="rtl"><div className="login-loading"><img src="/kalameh-logo.png" alt=""/><strong>اطلاعات بارگذاری نشد</strong><span>{loadError}</span><Button onClick={()=>setLoadAttempt(value=>value+1)}>تلاش دوباره</Button></div></main>;
-  if(!ready)return <main className="login-screen" dir="rtl"><div className="login-loading"><img src="/kalameh-logo.png" alt=""/><span>در حال دریافت اطلاعات از دیتابیس...</span></div></main>;
+  if (authStatus === "loading")
+    return (
+      <main className="login-screen" dir="rtl">
+        <div className="login-loading">
+          <img src="./kalameh-logo.png" alt="" />
+          <span>در حال آماده‌سازی میزکار...</span>
+        </div>
+      </main>
+    );
+  if (authStatus === "anonymous")
+    return (
+      <LoginScreen
+        onLogin={(user) => {
+          setAuthUser(user);
+          setCurrentEmail(user.email);
+          setAuthStatus("authenticated");
+        }}
+      />
+    );
+  if (loadError)
+    return (
+      <main className="login-screen" dir="rtl">
+        <div className="login-loading">
+          <img src="./kalameh-logo.png" alt="" />
+          <strong>اطلاعات بارگذاری نشد</strong>
+          <span>{loadError}</span>
+          <Button
+            onClick={() => {
+              setLoadError("");
+              setReady(false);
+              setLoadAttempt((value) => value + 1);
+            }}
+          >
+            تلاش دوباره
+          </Button>
+        </div>
+      </main>
+    );
+  if (!ready)
+    return (
+      <main className="login-screen" dir="rtl">
+        <div className="login-loading">
+          <img src="./kalameh-logo.png" alt="" />
+          <span>در حال دریافت اطلاعات از دیتابیس...</span>
+        </div>
+      </main>
+    );
   const moveTask = (id: number, status: TaskStatus) =>
     patch(
       "tasks",
@@ -972,7 +1280,7 @@ export default function Home() {
               messages: [
                 ...c.messages,
                 {
-                  id: Date.now(),
+                  id: newId(),
                   mine: true,
                   text: message.trim(),
                   time: now(),
@@ -998,22 +1306,98 @@ export default function Home() {
     setChatFile(await response.json());
     toast.success("فایل آماده ارسال است");
   };
-  const matchedMember=data.members.find(m=>m.email.toLowerCase()===currentEmail.toLowerCase());
-  const currentMember=matchedMember||{
-    id:data.members.reduce((max,member)=>Math.max(max,member.id),0)+1,
-    name:authUser?.name||currentEmail.split("@")[0]||"کاربر",
-    email:currentEmail||authUser?.email||"",
-    role:authUser?.role==="admin"?"مدیر کل":"عضو تیم",
-    status:"فعال" as const,
-    permissions:authUser?.role==="admin"?["همه بخش‌ها"]:[],
-  },isAdmin=authUser?.role==="admin";
-  const viewPermission:Partial<Record<View,string>>={projects:"پروژه‌ها",tasks:"وظایف",finance:"مالی",clients:"مشتریان",leads:"لیدها",contracts:"قراردادها",team:"اعضای تیم",messages:"پیام‌ها",letters:"نامه‌ها",calendar:"تقویم",settings:"تنظیمات"};
-  const hasPermission=(...permissions:string[])=>isAdmin||permissions.some((permission)=>currentMember?.permissions.includes(permission))||currentMember?.permissions.includes("همه بخش‌ها");
-  const canView=(next:View)=>isAdmin||["dashboard","leaves"].includes(next)||(viewPermission[next]&&currentMember?.permissions.includes(viewPermission[next]!))||(next==="projects"&&hasPermission("مشاهده پروژه‌ها","افزودن پروژه","ویرایش پروژه","حذف پروژه"))||(next==="tasks"&&hasPermission("مشاهده تسک‌ها","افزودن تسک","ویرایش تسک","حذف تسک","تغییر وضعیت تسک"))||(next==="clients"&&hasPermission("مشاهده مشتریان","افزودن مشتری","ویرایش مشتری","حذف مشتری"))||(next==="finance"&&hasPermission("مشاهده مالی","مدیریت مالی"))||(next==="leads"&&hasPermission("مشاهده لیدها","افزودن لید","ویرایش لید","حذف لید"))||(next==="contracts"&&hasPermission("مشاهده قراردادها","مدیریت قراردادها"))||(next==="messages"&&hasPermission("ارسال پیام"))||(next==="letters"&&hasPermission("مشاهده نامه‌ها","ایجاد نامه"))||(next==="calendar"&&hasPermission("مشاهده تقویم","مدیریت تقویم"))||(next==="reports"&&hasPermission("گزارش‌ها"));
-  const visibleProjects=data.projects.filter(p=>isAdmin||!p.ownerId||p.ownerId===currentMember?.id||(p.memberIds||[]).includes(currentMember?.id));
-  const visibleProjectNames=new Set(visibleProjects.map(p=>p.title));
-  const visibleTasks=data.tasks.filter(t=>visibleProjectNames.has(t.project)&&(isAdmin||t.assignee===currentMember?.name||visibleProjects.some(p=>p.title===t.project&&(p.memberIds||[]).includes(currentMember?.id))));
-  const today=todayJalali(),overdueTasks=visibleTasks.filter(t=>!["done","cancelled"].includes(t.status)&&(t.endDate||t.due)>=today?false:true);
+  const matchedMember = data.members.find(
+    (m) => m.email.toLowerCase() === currentEmail.toLowerCase(),
+  );
+  const currentMember = matchedMember || {
+      id: data.members.reduce((max, member) => Math.max(max, member.id), 0) + 1,
+      name: authUser?.name || currentEmail.split("@")[0] || "کاربر",
+      email: currentEmail || authUser?.email || "",
+      role: authUser?.role === "admin" ? "مدیر کل" : "عضو تیم",
+      status: "فعال" as const,
+      permissions: authUser?.role === "admin" ? ["همه بخش‌ها"] : [],
+    },
+    isAdmin = authUser?.role === "admin";
+  const viewPermission: Partial<Record<View, string>> = {
+    projects: "پروژه‌ها",
+    tasks: "وظایف",
+    finance: "مالی",
+    clients: "مشتریان",
+    leads: "لیدها",
+    contracts: "قراردادها",
+    team: "اعضای تیم",
+    messages: "پیام‌ها",
+    letters: "نامه‌ها",
+    calendar: "تقویم",
+    settings: "تنظیمات",
+  };
+  const hasPermission = (...permissions: string[]) =>
+    isAdmin ||
+    permissions.some((permission) =>
+      currentMember?.permissions.includes(permission),
+    ) ||
+    currentMember?.permissions.includes("همه بخش‌ها");
+  const canView = (next: View) =>
+    isAdmin ||
+    ["dashboard", "leaves"].includes(next) ||
+    (viewPermission[next] &&
+      currentMember?.permissions.includes(viewPermission[next]!)) ||
+    (next === "projects" &&
+      hasPermission(
+        "مشاهده پروژه‌ها",
+        "افزودن پروژه",
+        "ویرایش پروژه",
+        "حذف پروژه",
+      )) ||
+    (next === "tasks" &&
+      hasPermission(
+        "مشاهده تسک‌ها",
+        "افزودن تسک",
+        "ویرایش تسک",
+        "حذف تسک",
+        "تغییر وضعیت تسک",
+      )) ||
+    (next === "clients" &&
+      hasPermission(
+        "مشاهده مشتریان",
+        "افزودن مشتری",
+        "ویرایش مشتری",
+        "حذف مشتری",
+      )) ||
+    (next === "finance" && hasPermission("مشاهده مالی", "مدیریت مالی")) ||
+    (next === "leads" &&
+      hasPermission("مشاهده لیدها", "افزودن لید", "ویرایش لید", "حذف لید")) ||
+    (next === "contracts" &&
+      hasPermission("مشاهده قراردادها", "مدیریت قراردادها")) ||
+    (next === "messages" && hasPermission("ارسال پیام")) ||
+    (next === "letters" && hasPermission("مشاهده نامه‌ها", "ایجاد نامه")) ||
+    (next === "calendar" && hasPermission("مشاهده تقویم", "مدیریت تقویم")) ||
+    (next === "reports" && hasPermission("گزارش‌ها"));
+  const visibleProjects = data.projects.filter(
+    (p) =>
+      isAdmin ||
+      !p.ownerId ||
+      p.ownerId === currentMember?.id ||
+      (p.memberIds || []).includes(currentMember?.id),
+  );
+  const visibleProjectNames = new Set(visibleProjects.map((p) => p.title));
+  const visibleTasks = data.tasks.filter(
+    (t) =>
+      visibleProjectNames.has(t.project) &&
+      (isAdmin ||
+        t.assignee === currentMember?.name ||
+        visibleProjects.some(
+          (p) =>
+            p.title === t.project &&
+            (p.memberIds || []).includes(currentMember?.id),
+        )),
+  );
+  const today = todayJalali(),
+    overdueTasks = visibleTasks.filter((t) =>
+      !["done", "cancelled"].includes(t.status) && (t.endDate || t.due) >= today
+        ? false
+        : true,
+    );
   return (
     <div
       dir="rtl"
@@ -1029,7 +1413,7 @@ export default function Home() {
             <button className="brand" onClick={() => setView("dashboard")}>
               <img
                 className="brand-logo"
-                src="/kalameh-logo.png"
+                src="./kalameh-logo.png"
                 alt="آژانس تبلیغاتی کلمه"
               />
             </button>
@@ -1113,11 +1497,23 @@ export default function Home() {
               </Avatar>
               <span>
                 <strong>{currentMember?.name || authUser?.name}</strong>
-                <small>{currentMember?.role || (isAdmin ? "مدیر کل" : "عضو تیم")}</small>
+                <small>
+                  {currentMember?.role || (isAdmin ? "مدیر کل" : "عضو تیم")}
+                </small>
               </span>
               <Settings size={18} />
             </button>
-            <button className="sidebar-logout" onClick={async()=>{await fetch("api/auth/logout",{method:"POST"});setAuthUser(null);setAuthStatus("anonymous");setReady(false)}}><LogOut size={17}/> خروج از حساب</button>
+            <button
+              className="sidebar-logout"
+              onClick={async () => {
+                await fetch("api/auth/logout", { method: "POST" });
+                setAuthUser(null);
+                setAuthStatus("anonymous");
+                setReady(false);
+              }}
+            >
+              <LogOut size={17} /> خروج از حساب
+            </button>
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="main-shell">
@@ -1155,7 +1551,65 @@ export default function Home() {
               )}
             </div>
             <div className="topbar-actions">
-              <DropdownMenu><DropdownMenuTrigger asChild><button className={overdueTasks.length?"deadline-alarm ringing":"deadline-alarm"} aria-label="هشدار سررسید"><AlertTriangle/>{overdueTasks.length>0&&<b>{faDigits(String(overdueTasks.length))}</b>}</button></DropdownMenuTrigger><DropdownMenuContent align="start" className="deadline-menu"><strong>تسک‌های عقب‌افتاده</strong>{overdueTasks.slice(0,7).map(t=><DropdownMenuItem key={t.id} onClick={()=>setView("tasks")}><AlertTriangle/><span><b>{t.title}</b><small>{t.project} · مهلت {t.endDate||t.due}</small></span></DropdownMenuItem>)}{!overdueTasks.length&&<DropdownMenuItem disabled>تسک عقب‌افتاده‌ای ندارید.</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
+              <button
+                className={`save-state save-state-${saveStatus}`}
+                onClick={() =>
+                  saveStatus === "error" && setSaveAttempt((value) => value + 1)
+                }
+                title={saveError || undefined}
+                aria-label={
+                  saveStatus === "saved"
+                    ? "همه تغییرات ذخیره شده"
+                    : saveStatus === "saving"
+                      ? "در حال ذخیره تغییرات"
+                      : "ذخیره ناموفق؛ تلاش دوباره"
+                }
+              >
+                {saveStatus === "saved"
+                  ? "ذخیره شد"
+                  : saveStatus === "saving"
+                    ? "در حال ذخیره…"
+                    : "تلاش دوباره"}
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className={
+                      overdueTasks.length
+                        ? "deadline-alarm ringing"
+                        : "deadline-alarm"
+                    }
+                    aria-label="هشدار سررسید"
+                  >
+                    <AlertTriangle />
+                    {overdueTasks.length > 0 && (
+                      <b>{faDigits(String(overdueTasks.length))}</b>
+                    )}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="deadline-menu">
+                  <strong>تسک‌های عقب‌افتاده</strong>
+                  {overdueTasks.slice(0, 7).map((t) => (
+                    <DropdownMenuItem
+                      key={t.id}
+                      onClick={() => setView("tasks")}
+                    >
+                      <AlertTriangle />
+                      <span>
+                        <b>{t.title}</b>
+                        <small>
+                          {t.project} · مهلت {t.endDate || t.due}
+                        </small>
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  {!overdueTasks.length && (
+                    <DropdownMenuItem disabled>
+                      تسک عقب‌افتاده‌ای ندارید.
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <button
                 aria-label="تسک‌های شخصی"
                 title="تسک‌های شخصی"
@@ -1197,16 +1651,37 @@ export default function Home() {
           <main className="content-area">
             {view === "dashboard" && (
               <DashboardV2
-                data={{...data,personalTasks:data.personalTasks.filter((task)=>task.ownerId===currentMember?.id||(!task.ownerId&&isAdmin))}}
+                data={{
+                  ...data,
+                  personalTasks: data.personalTasks.filter(
+                    (task) =>
+                      task.ownerId === currentMember?.id ||
+                      (!task.ownerId && isAdmin),
+                  ),
+                }}
                 totals={totals}
                 setView={setView}
-                canSeeFinance={hasPermission("مالی","مشاهده مالی","مدیریت مالی")}
+                canSeeFinance={hasPermission(
+                  "مالی",
+                  "مشاهده مالی",
+                  "مدیریت مالی",
+                )}
                 onToggle={(id) => {
                   const task = data.tasks.find((t) => t.id === id);
                   if (task)
                     moveTask(id, task.status === "done" ? "backlog" : "done");
                 }}
-                onPersonalToggle={id=>patch("personalTasks",data.personalTasks.map(t=>t.id===id?{...t,status:"done",archivedAt:today}:t),"تسک شخصی را تکمیل کرد")}
+                onPersonalToggle={(id) =>
+                  patch(
+                    "personalTasks",
+                    data.personalTasks.map((t) =>
+                      t.id === id
+                        ? { ...t, status: "done", archivedAt: today }
+                        : t,
+                    ),
+                    "تسک شخصی را تکمیل کرد",
+                  )
+                }
               />
             )}{" "}
             {view === "projects" && (
@@ -1217,8 +1692,8 @@ export default function Home() {
                 onOpen={setSelectedProject}
               />
             )}{" "}
-              {view === "tasks" && (
-                <TasksTableV3
+            {view === "tasks" && (
+              <TasksTableV3
                 tasks={visibleTasks.filter((t) =>
                   `${t.title} ${t.project} ${t.assignee}`.includes(query),
                 )}
@@ -1228,10 +1703,49 @@ export default function Home() {
                   setEditing(id);
                   setDialog("task");
                 }}
-                  onDelete={deleteTask}
-                  personalTasks={data.personalTasks}
-                  onPersonalToggle={id=>patch("personalTasks",data.personalTasks.map(t=>t.id===id?{...t,status:t.status==="done"?"active":"done",archivedAt:t.status==="done"?undefined:todayJalali()}:t),"وضعیت تسک شخصی را تغییر داد")}
-                  onToggleSubtask={(taskId,subtaskId)=>patch("tasks",data.tasks.map(t=>{if(t.id!==taskId)return t;const subtasks=t.subtasks?.map(s=>s.id===subtaskId?{...s,done:!s.done}:s);const allDone=Boolean(subtasks?.length&&subtasks.every(s=>s.done));return {...t,subtasks,status:allDone?"done":t.status==="done"?"backlog":t.status,archivedAt:allDone?today:undefined}}),"زیرتسک را تغییر داد")}
+                onDelete={deleteTask}
+                personalTasks={data.personalTasks}
+                onPersonalToggle={(id) =>
+                  patch(
+                    "personalTasks",
+                    data.personalTasks.map((t) =>
+                      t.id === id
+                        ? {
+                            ...t,
+                            status: t.status === "done" ? "active" : "done",
+                            archivedAt:
+                              t.status === "done" ? undefined : todayJalali(),
+                          }
+                        : t,
+                    ),
+                    "وضعیت تسک شخصی را تغییر داد",
+                  )
+                }
+                onToggleSubtask={(taskId, subtaskId) =>
+                  patch(
+                    "tasks",
+                    data.tasks.map((t) => {
+                      if (t.id !== taskId) return t;
+                      const subtasks = t.subtasks?.map((s) =>
+                        s.id === subtaskId ? { ...s, done: !s.done } : s,
+                      );
+                      const allDone = Boolean(
+                        subtasks?.length && subtasks.every((s) => s.done),
+                      );
+                      return {
+                        ...t,
+                        subtasks,
+                        status: allDone
+                          ? "done"
+                          : t.status === "done"
+                            ? "backlog"
+                            : t.status,
+                        archivedAt: allDone ? today : undefined,
+                      };
+                    }),
+                    "زیرتسک را تغییر داد",
+                  )
+                }
                 dragged={dragged}
                 setDragged={setDragged}
               />
@@ -1278,15 +1792,41 @@ export default function Home() {
                     [...fresh, ...data.transactions],
                     `${fresh.length} سند مالی را از اکسل وارد کرد`,
                   );
-                  toast.success(`${faDigits(String(fresh.length))} سند مالی ثبت شد`);
+                  toast.success(
+                    `${faDigits(String(fresh.length))} سند مالی ثبت شد`,
+                  );
                 }}
               />
             )}{" "}
-            {view==="calendar"&&<CalendarCenter tasks={visibleTasks} events={data.events} projects={visibleProjects} onSave={event=>patch("events",[event,...data.events],"رویداد تقویم ثبت کرد")}/>} {view==="reports"&&<ReportsCenter data={{...data,projects:visibleProjects,tasks:visibleTasks}}/>}
+            {view === "calendar" && (
+              <CalendarCenter
+                tasks={visibleTasks}
+                events={data.events}
+                projects={visibleProjects}
+                onSave={(event) =>
+                  patch(
+                    "events",
+                    [event, ...data.events],
+                    "رویداد تقویم ثبت کرد",
+                  )
+                }
+              />
+            )}{" "}
+            {view === "reports" && (
+              <ReportsCenter
+                data={{
+                  ...data,
+                  projects: visibleProjects,
+                  tasks: visibleTasks,
+                }}
+              />
+            )}
             {view === "clients" && (
               <ClientsV2
                 clients={data.clients}
-                labels={data.preferences.labels?.clients || defaultLabels.clients}
+                labels={
+                  data.preferences.labels?.clients || defaultLabels.clients
+                }
                 projects={data.projects}
                 transactions={data.transactions}
                 contracts={data.contracts}
@@ -1296,15 +1836,33 @@ export default function Home() {
                   setDialog("client");
                 }}
                 onDelete={(id) => {
-                  patch("clients", data.clients.filter((client) => client.id !== id), "مشتری را حذف کرد");
+                  patch(
+                    "clients",
+                    data.clients.filter((client) => client.id !== id),
+                    "مشتری را حذف کرد",
+                  );
                   toast.success("مشتری حذف شد");
                 }}
-                onImport={(rows)=>{
-                  const identity=(client:Client)=>client.email?`email:${client.email.toLowerCase()}`:client.phone?`phone:${client.phone.replace(/\s/g,"")}`:`name:${client.name}|${client.company}`;
-                  const existing=new Set(data.clients.map(identity));
-                  const fresh=rows.filter(client=>!existing.has(identity(client)));
-                  if(!fresh.length){toast.error("همه مشتریان این فایل قبلاً ثبت شده‌اند.");return}
-                  patch("clients",[...fresh,...data.clients],`${fresh.length} مشتری را از اکسل وارد کرد`);
+                onImport={(rows) => {
+                  const identity = (client: Client) =>
+                    client.email
+                      ? `email:${client.email.toLowerCase()}`
+                      : client.phone
+                        ? `phone:${client.phone.replace(/\s/g, "")}`
+                        : `name:${client.name}|${client.company}`;
+                  const existing = new Set(data.clients.map(identity));
+                  const fresh = rows.filter(
+                    (client) => !existing.has(identity(client)),
+                  );
+                  if (!fresh.length) {
+                    toast.error("همه مشتریان این فایل قبلاً ثبت شده‌اند.");
+                    return;
+                  }
+                  patch(
+                    "clients",
+                    [...fresh, ...data.clients],
+                    `${fresh.length} مشتری را از اکسل وارد کرد`,
+                  );
                 }}
               />
             )}{" "}
@@ -1316,7 +1874,7 @@ export default function Home() {
                 onConvert={(lead) => {
                   patch("clients", [
                     {
-                      id: Date.now(),
+                      id: newId(),
                       name: lead.name,
                       company: lead.company,
                       phone: lead.phone,
@@ -1346,19 +1904,36 @@ export default function Home() {
                 leaves={data.leaves}
                 logs={data.logs}
                 currentMemberId={currentMember?.id || 0}
-                onAdd={() => {setSelectedMember(null);openCreate("member")}}
-                onEdit={(m)=>{setSelectedMember(m);setDialog("member")}}
+                onAdd={() => {
+                  setSelectedMember(null);
+                  openCreate("member");
+                }}
+                onEdit={(m) => {
+                  setSelectedMember(m);
+                  setDialog("member");
+                }}
                 onAccess={(m) => {
                   setSelectedMember(m);
                   setDialog("access");
                 }}
-                onDelete={async(id) => {
-                  const member=data.members.find((m)=>m.id===id);
-                  if(!member)return;
-                  const response=await fetch("api/auth/users",{method:"DELETE",headers:{"content-type":"application/json"},body:JSON.stringify({email:member.email})});
-                  const result=await response.json() as {error?:string};
-                  if(!response.ok){toast.error(result.error||"حذف حساب انجام نشد");return}
-                  patch("members",data.members.filter((m) => m.id !== id),"یک همکار را حذف کرد");
+                onDelete={async (id) => {
+                  const member = data.members.find((m) => m.id === id);
+                  if (!member) return;
+                  const response = await fetch("api/auth/users", {
+                    method: "DELETE",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ email: member.email }),
+                  });
+                  const result = (await response.json()) as { error?: string };
+                  if (!response.ok) {
+                    toast.error(result.error || "حذف حساب انجام نشد");
+                    return;
+                  }
+                  patch(
+                    "members",
+                    data.members.filter((m) => m.id !== id),
+                    "یک همکار را حذف کرد",
+                  );
                   toast.success("حساب همکار غیرفعال شد");
                 }}
                 onCheckIn={() =>
@@ -1366,7 +1941,7 @@ export default function Home() {
                     "attendance",
                     [
                       {
-                        id: Date.now(),
+                        id: newId(),
                         memberId: currentMember?.id || 1,
                         date: todayJalali(),
                         checkIn: now(),
@@ -1384,7 +1959,8 @@ export default function Home() {
                       !a.checkOut &&
                       i ===
                         data.attendance.findIndex(
-                          (x) => x.memberId === currentMember?.id && !x.checkOut,
+                          (x) =>
+                            x.memberId === currentMember?.id && !x.checkOut,
                         )
                         ? { ...a, checkOut: now() }
                         : a,
@@ -1467,11 +2043,18 @@ export default function Home() {
               <SettingsV3
                 member={currentMember}
                 isAdmin={isAdmin}
-                onRecover={async()=>{
-                  const response=await fetch("api/workspace/recover",{method:"POST"});
-                  const result=await response.json().catch(()=>({}));
-                  if(!response.ok||!result.data)throw new Error(result.error||"بازیابی انجام نشد.");
-                  workspaceVersion.current=typeof result.updatedAt==="string"?result.updatedAt:null;
+                onRecover={async () => {
+                  const response = await fetch("api/workspace/recover", {
+                    method: "POST",
+                  });
+                  const result = await response.json().catch(() => ({}));
+                  if (!response.ok || !result.data)
+                    throw new Error(result.error || "بازیابی انجام نشد.");
+                  workspaceRevision.current =
+                    Number(result.revision) || workspaceRevision.current + 1;
+                  lastSyncedWorkspace.current = result.data as Workspace;
+                  pendingWorkspace.current = null;
+                  clearPendingWorkspace();
                   setData(result.data as Workspace);
                 }}
                 onAvatar={(avatar) =>
@@ -1479,7 +2062,8 @@ export default function Home() {
                     "members",
                     matchedMember
                       ? data.members.map((m) =>
-                          m.email.toLowerCase() === currentMember.email.toLowerCase()
+                          m.email.toLowerCase() ===
+                          currentMember.email.toLowerCase()
                             ? { ...m, avatar }
                             : m,
                         )
@@ -1509,11 +2093,25 @@ export default function Home() {
         open={dialog === "personal"}
         close={() => setDialog(null)}
         ownerId={currentMember?.id || 0}
-        tasks={data.personalTasks.filter((task) => task.ownerId === currentMember?.id || (!task.ownerId && isAdmin))}
-        save={(tasks) => patch("personalTasks", [
-          ...data.personalTasks.filter((task) => task.ownerId && task.ownerId !== currentMember?.id),
-          ...tasks.map((task) => ({ ...task, ownerId: currentMember?.id || 0 })),
-        ], "تسک‌های شخصی را به‌روزرسانی کرد")}
+        tasks={data.personalTasks.filter(
+          (task) =>
+            task.ownerId === currentMember?.id || (!task.ownerId && isAdmin),
+        )}
+        save={(tasks) =>
+          patch(
+            "personalTasks",
+            [
+              ...data.personalTasks.filter(
+                (task) => task.ownerId && task.ownerId !== currentMember?.id,
+              ),
+              ...tasks.map((task) => ({
+                ...task,
+                ownerId: currentMember?.id || 0,
+              })),
+            ],
+            "تسک‌های شخصی را به‌روزرسانی کرد",
+          )
+        }
       />
       <ProjectDialogPro
         open={dialog === "project"}
@@ -1523,7 +2121,13 @@ export default function Home() {
         free={freeProject}
         setFree={setFreeProject}
         save={(p) => {
-          const owned={...p,ownerId:currentMember?.id||1,memberIds:Array.from(new Set([...(p.memberIds||[]),currentMember?.id||1]))};
+          const owned = {
+            ...p,
+            ownerId: currentMember?.id || 1,
+            memberIds: Array.from(
+              new Set([...(p.memberIds || []), currentMember?.id || 1]),
+            ),
+          };
           patch("projects", [owned, ...data.projects]);
           pushNotification("پروژه «" + p.title + "» ایجاد شد", "project");
           setDialog(null);
@@ -1539,8 +2143,16 @@ export default function Home() {
           setEditing(null);
         }}
         save={(c) => {
-          patch("clients", editing ? data.clients.map((client) => client.id === editing ? c : client) : [c, ...data.clients]);
-          if (!editing) pushNotification("مشتری «" + c.name + "» تعریف شد", "client");
+          patch(
+            "clients",
+            editing
+              ? data.clients.map((client) =>
+                  client.id === editing ? c : client,
+                )
+              : [c, ...data.clients],
+          );
+          if (!editing)
+            pushNotification("مشتری «" + c.name + "» تعریف شد", "client");
           setDialog(null);
           setEditing(null);
         }}
@@ -1578,7 +2190,9 @@ export default function Home() {
             editing
               ? data.tasks.map((x) => (x.id === editing ? t : x))
               : [t, ...data.tasks],
-            editing ? `تسک «${t.title}» را ویرایش کرد` : `تسک «${t.title}» را برای ${t.assignee} با مهلت ${t.endDate || t.due} ساخت`,
+            editing
+              ? `تسک «${t.title}» را ویرایش کرد`
+              : `تسک «${t.title}» را برای ${t.assignee} با مهلت ${t.endDate || t.due} ساخت`,
           );
           if (!editing)
             pushNotification("تسک «" + t.title + "» اضافه شد", "task");
@@ -1604,18 +2218,52 @@ export default function Home() {
         open={dialog === "member"}
         close={() => setDialog(null)}
         member={selectedMember}
-        save={async(m,password) => {
-          const editingMember=selectedMember;
-          const response=await fetch("api/auth/users",{method:editingMember?"PATCH":"POST",headers:{"content-type":"application/json"},body:JSON.stringify({currentEmail:editingMember?.email,name:m.name,email:m.email,role:m.role,password,active:m.status==="فعال"})});
-          const result=await response.json() as {error?:string};
-          if(!response.ok){toast.error(result.error||(editingMember?"ویرایش حساب انجام نشد":"ساخت حساب انجام نشد"));return false}
-          if(editingMember){
-            patch("members",data.members.map(x=>x.id===editingMember.id?m:x),`اطلاعات عضو «${editingMember.name}» را ویرایش کرد`);
-            if(editingMember.name!==m.name)patch("tasks",data.tasks.map(task=>task.assignee===editingMember.name?{...task,assignee:m.name}:task),`نام مسئول تسک‌ها را به «${m.name}» تغییر داد`);
-          }else patch("members", [m, ...data.members]);
+        save={async (m, password) => {
+          const editingMember = selectedMember;
+          const response = await fetch("api/auth/users", {
+            method: editingMember ? "PATCH" : "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              currentEmail: editingMember?.email,
+              name: m.name,
+              email: m.email,
+              role: m.role,
+              password,
+              active: m.status === "فعال",
+            }),
+          });
+          const result = (await response.json()) as { error?: string };
+          if (!response.ok) {
+            toast.error(
+              result.error ||
+                (editingMember
+                  ? "ویرایش حساب انجام نشد"
+                  : "ساخت حساب انجام نشد"),
+            );
+            return false;
+          }
+          if (editingMember) {
+            patch(
+              "members",
+              data.members.map((x) => (x.id === editingMember.id ? m : x)),
+              `اطلاعات عضو «${editingMember.name}» را ویرایش کرد`,
+            );
+            if (editingMember.name !== m.name)
+              patch(
+                "tasks",
+                data.tasks.map((task) =>
+                  task.assignee === editingMember.name
+                    ? { ...task, assignee: m.name }
+                    : task,
+                ),
+                `نام مسئول تسک‌ها را به «${m.name}» تغییر داد`,
+              );
+          } else patch("members", [m, ...data.members]);
           setSelectedMember(null);
           setDialog(null);
-          toast.success(editingMember?"اطلاعات همکار ذخیره شد":"همکار جدید ثبت شد");
+          toast.success(
+            editingMember ? "اطلاعات همکار ذخیره شد" : "همکار جدید ثبت شد",
+          );
           return true;
         }}
       />
@@ -1681,7 +2329,9 @@ export default function Home() {
           );
           patch(
             "projects",
-            data.projects.filter((project) => project.id !== selectedProject.id),
+            data.projects.filter(
+              (project) => project.id !== selectedProject.id,
+            ),
             `پروژه «${selectedProject.title}» را حذف کرد`,
           );
           setSelectedProject(null);
@@ -1692,9 +2342,47 @@ export default function Home() {
           setDialog("task");
         }}
         onMove={moveTask}
-        onToggleSubtask={(taskId, subtaskId) => patch("tasks", data.tasks.map(t=>{if(t.id!==taskId)return t;const subtasks=t.subtasks?.map(s=>s.id===subtaskId?{...s,done:!s.done}:s);const allDone=Boolean(subtasks?.length&&subtasks.every(s=>s.done));return {...t,subtasks,status:allDone?"done":t.status==="done"?"backlog":t.status,progress:allDone?100:0,archivedAt:allDone?todayJalali():undefined}}), "وضعیت یک زیرتسک را تغییر داد")}
-        onUpdateTask={updated=>patch("tasks",data.tasks.map(t=>t.id===updated.id?updated:t),"دیدگاه یا فایل تسک را به‌روزرسانی کرد")}
-        onUpdateProject={updated=>{patch("projects",data.projects.map(p=>p.id===updated.id?updated:p),"فایل پروژه را به‌روزرسانی کرد");setSelectedProject(updated)}}
+        onToggleSubtask={(taskId, subtaskId) =>
+          patch(
+            "tasks",
+            data.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              const subtasks = t.subtasks?.map((s) =>
+                s.id === subtaskId ? { ...s, done: !s.done } : s,
+              );
+              const allDone = Boolean(
+                subtasks?.length && subtasks.every((s) => s.done),
+              );
+              return {
+                ...t,
+                subtasks,
+                status: allDone
+                  ? "done"
+                  : t.status === "done"
+                    ? "backlog"
+                    : t.status,
+                progress: allDone ? 100 : 0,
+                archivedAt: allDone ? todayJalali() : undefined,
+              };
+            }),
+            "وضعیت یک زیرتسک را تغییر داد",
+          )
+        }
+        onUpdateTask={(updated) =>
+          patch(
+            "tasks",
+            data.tasks.map((t) => (t.id === updated.id ? updated : t)),
+            "دیدگاه یا فایل تسک را به‌روزرسانی کرد",
+          )
+        }
+        onUpdateProject={(updated) => {
+          patch(
+            "projects",
+            data.projects.map((p) => (p.id === updated.id ? updated : p)),
+            "فایل پروژه را به‌روزرسانی کرد",
+          );
+          setSelectedProject(updated);
+        }}
       />
       <ProjectSettingsV3
         open={dialog === "projectSettings"}
@@ -1725,44 +2413,479 @@ export default function Home() {
   );
 }
 
-function CalendarCenter({tasks,events,projects,onSave}:{tasks:Task[];events:CalendarEvent[];projects:Project[];onSave:(event:CalendarEvent)=>void}){const [open,setOpen]=useState(false),currentMonth=currentJalaliMonth(),{month,day}=jalaliDateParts(),numericMonth=Number(latinDigits(month)),numericDay=Number(latinDigits(day)),days=Array.from({length:numericMonth<=6?31:numericMonth<=11?30:29},(_,i)=>i+1),dayKey=(value:number)=>`${currentMonth}/${faDigits(String(value).padStart(2,"0"))}`;return <><PageTitle title="تقویم یکپارچه" subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"><Button onClick={()=>setOpen(true)}><Plus/> رویداد جدید</Button></PageTitle><div className="calendar-toolbar"><button><ChevronDown/> {monthTitle(currentMonth)}</button><div><span className="task-dot"/> ددلاین تسک <span className="meeting-dot"/> جلسه و رویداد</div></div><section className="agency-calendar"><header>{["شنبه","یکشنبه","دوشنبه","سه‌شنبه","چهارشنبه","پنجشنبه","جمعه"].map(x=><span key={x}>{x}</span>)}</header><div>{days.map(value=>{const key=dayKey(value),dayTasks=tasks.filter(t=>(t.endDate||t.due)===key),dayEvents=events.filter(e=>e.date===key);return <article key={value} className={value===numericDay?"today":""}><b>{faDigits(String(value))}</b>{dayEvents.slice(0,2).map(e=><span className="calendar-event meeting" key={e.id}>{e.time} {e.title}</span>)}{dayTasks.slice(0,2).map(t=><span className="calendar-event task" key={t.id}>{t.title}</span>)}{dayTasks.length+dayEvents.length>4&&<small>+{faDigits(String(dayTasks.length+dayEvents.length-4))} مورد</small>}</article>})}</div></section><Modal open={open} close={()=>setOpen(false)} title="افزودن رویداد تقویم" description="جلسه، ددلاین یا یادآوری جدید را در تقویم شمسی ثبت کنید." submit="ثبت در تقویم" onSubmit={e=>{e.preventDefault();const d=fd(e);onSave({id:Date.now(),title:d.title,date:d.date,time:d.time,type:d.type as CalendarEvent["type"],project:d.project});setOpen(false)}}><div className="form-grid"><Field label="عنوان رویداد" name="title" wide required/><Field label="تاریخ شمسی" name="date" defaultValue={todayJalali()}/><Field label="ساعت" name="time" defaultValue="۱۰:۰۰"/><Field label="نوع رویداد" name="type"><select name="type"><option>جلسه</option><option>ددلاین</option><option>یادآوری</option></select></Field><Field label="پروژه" name="project"><select name="project"><option value="">بدون پروژه</option>{projects.map(p=><option key={p.id}>{p.title}</option>)}</select></Field></div></Modal></>}
+function CalendarCenter({
+  tasks,
+  events,
+  projects,
+  onSave,
+}: {
+  tasks: Task[];
+  events: CalendarEvent[];
+  projects: Project[];
+  onSave: (event: CalendarEvent) => void;
+}) {
+  const [open, setOpen] = useState(false),
+    currentMonth = currentJalaliMonth(),
+    { month, day } = jalaliDateParts(),
+    numericMonth = Number(latinDigits(month)),
+    numericDay = Number(latinDigits(day)),
+    days = Array.from(
+      { length: numericMonth <= 6 ? 31 : numericMonth <= 11 ? 30 : 29 },
+      (_, i) => i + 1,
+    ),
+    dayKey = (value: number) =>
+      `${currentMonth}/${faDigits(String(value).padStart(2, "0"))}`;
+  return (
+    <>
+      <PageTitle
+        title="تقویم یکپارچه"
+        subtitle="نمای ماهانه تسک‌ها، جلسات و ددلاین‌ها"
+      >
+        <Button onClick={() => setOpen(true)}>
+          <Plus /> رویداد جدید
+        </Button>
+      </PageTitle>
+      <div className="calendar-toolbar">
+        <button>
+          <ChevronDown /> {monthTitle(currentMonth)}
+        </button>
+        <div>
+          <span className="task-dot" /> ددلاین تسک{" "}
+          <span className="meeting-dot" /> جلسه و رویداد
+        </div>
+      </div>
+      <section className="agency-calendar">
+        <header>
+          {[
+            "شنبه",
+            "یکشنبه",
+            "دوشنبه",
+            "سه‌شنبه",
+            "چهارشنبه",
+            "پنجشنبه",
+            "جمعه",
+          ].map((x) => (
+            <span key={x}>{x}</span>
+          ))}
+        </header>
+        <div>
+          {days.map((value) => {
+            const key = dayKey(value),
+              dayTasks = tasks.filter((t) => (t.endDate || t.due) === key),
+              dayEvents = events.filter((e) => e.date === key);
+            return (
+              <article
+                key={value}
+                className={value === numericDay ? "today" : ""}
+              >
+                <b>{faDigits(String(value))}</b>
+                {dayEvents.slice(0, 2).map((e) => (
+                  <span className="calendar-event meeting" key={e.id}>
+                    {e.time} {e.title}
+                  </span>
+                ))}
+                {dayTasks.slice(0, 2).map((t) => (
+                  <span className="calendar-event task" key={t.id}>
+                    {t.title}
+                  </span>
+                ))}
+                {dayTasks.length + dayEvents.length > 4 && (
+                  <small>
+                    +{faDigits(String(dayTasks.length + dayEvents.length - 4))}{" "}
+                    مورد
+                  </small>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </section>
+      <Modal
+        open={open}
+        close={() => setOpen(false)}
+        title="افزودن رویداد تقویم"
+        description="جلسه، ددلاین یا یادآوری جدید را در تقویم شمسی ثبت کنید."
+        submit="ثبت در تقویم"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const d = fd(e);
+          onSave({
+            id: newId(),
+            title: d.title,
+            date: d.date,
+            time: d.time,
+            type: d.type as CalendarEvent["type"],
+            project: d.project,
+          });
+          setOpen(false);
+        }}
+      >
+        <div className="form-grid">
+          <Field label="عنوان رویداد" name="title" wide required />
+          <Field label="تاریخ شمسی" name="date" defaultValue={todayJalali()} />
+          <Field label="ساعت" name="time" defaultValue="۱۰:۰۰" />
+          <Field label="نوع رویداد" name="type">
+            <select name="type">
+              <option>جلسه</option>
+              <option>ددلاین</option>
+              <option>یادآوری</option>
+            </select>
+          </Field>
+          <Field label="پروژه" name="project">
+            <select name="project">
+              <option value="">بدون پروژه</option>
+              {projects.map((p) => (
+                <option key={p.id}>{p.title}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </Modal>
+    </>
+  );
+}
 
-function ReportsCenter({data}:{data:Workspace}){const [section,setSection]=useState("projects");const done=data.tasks.filter(t=>t.status==="done"),active=data.tasks.filter(t=>!["done","cancelled"].includes(t.status));return <><PageTitle title="مرکز گزارش‌گیری" subtitle="گزارش یکپارچه مشتریان، پروژه‌ها، تسک‌ها، تیم و امور مالی"><Button variant="outline" onClick={()=>downloadWorkspaceReport(section,data)}><Download/> خروجی گزارش</Button></PageTitle><div className="report-tabs">{[["projects","پروژه‌ها"],["clients","مشتریان"],["tasks","وظایف"],["team","اعضا"],["finance","مالی"]].map(([id,title])=><button className={section===id?"active":""} onClick={()=>setSection(id)} key={id}>{title}</button>)}</div><section className="report-kpis"><article><FolderKanban/><span><strong>{faDigits(String(data.projects.length))}</strong><small>پروژه قابل مشاهده</small></span></article><article><CheckCircle2/><span><strong>{faDigits(String(done.length))}</strong><small>تسک تکمیل‌شده</small></span></article><article><Clock3/><span><strong>{faDigits(String(active.length))}</strong><small>تسک در جریان</small></span></article><article><Users/><span><strong>{faDigits(String(data.clients.length))}</strong><small>مشتری ثبت‌شده</small></span></article></section><section className="panel report-table">{section==="projects"&&data.projects.map(p=><div key={p.id}><strong>{p.title}</strong><span>{p.client||"پروژه آزاد"}</span><span>{data.tasks.filter(t=>t.project===p.title&&t.status==="done").length} انجام‌شده</span><span>{data.tasks.filter(t=>t.project===p.title&&!['done','cancelled'].includes(t.status)).length} باز</span></div>)}{section==="clients"&&data.clients.map(c=><div key={c.id}><strong>{c.name}</strong><span>{c.company}</span><span>{c.service}</span><span>{data.projects.filter(p=>p.client===c.company).length} پروژه</span></div>)}{section==="tasks"&&done.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{t.assignee}</span><span>{t.archivedAt||t.endDate}</span></div>)}{section==="team"&&data.members.map(m=><div key={m.id}><strong>{m.name}</strong><span>{m.role}</span><span>{data.tasks.filter(t=>t.assignee===m.name&&t.status==="done").length} تکمیل‌شده</span><span>{data.attendance.filter(a=>a.memberId===m.id).length} روز حضور</span></div>)}{section==="finance"&&data.transactions.map(t=><div key={t.id}><strong>{t.title}</strong><span>{t.project}</span><span>{money(t.amount)}</span><span>{t.status==="paid"?"پرداخت‌شده":"باز"}</span></div>)}</section></>}
+function ReportsCenter({ data }: { data: Workspace }) {
+  const [section, setSection] = useState("projects");
+  const done = data.tasks.filter((t) => t.status === "done"),
+    active = data.tasks.filter(
+      (t) => !["done", "cancelled"].includes(t.status),
+    );
+  return (
+    <>
+      <PageTitle
+        title="مرکز گزارش‌گیری"
+        subtitle="گزارش یکپارچه مشتریان، پروژه‌ها، تسک‌ها، تیم و امور مالی"
+      >
+        <Button
+          variant="outline"
+          onClick={() => downloadWorkspaceReport(section, data)}
+        >
+          <Download /> خروجی گزارش
+        </Button>
+      </PageTitle>
+      <div className="report-tabs">
+        {[
+          ["projects", "پروژه‌ها"],
+          ["clients", "مشتریان"],
+          ["tasks", "وظایف"],
+          ["team", "اعضا"],
+          ["finance", "مالی"],
+        ].map(([id, title]) => (
+          <button
+            className={section === id ? "active" : ""}
+            onClick={() => setSection(id)}
+            key={id}
+          >
+            {title}
+          </button>
+        ))}
+      </div>
+      <section className="report-kpis">
+        <article>
+          <FolderKanban />
+          <span>
+            <strong>{faDigits(String(data.projects.length))}</strong>
+            <small>پروژه قابل مشاهده</small>
+          </span>
+        </article>
+        <article>
+          <CheckCircle2 />
+          <span>
+            <strong>{faDigits(String(done.length))}</strong>
+            <small>تسک تکمیل‌شده</small>
+          </span>
+        </article>
+        <article>
+          <Clock3 />
+          <span>
+            <strong>{faDigits(String(active.length))}</strong>
+            <small>تسک در جریان</small>
+          </span>
+        </article>
+        <article>
+          <Users />
+          <span>
+            <strong>{faDigits(String(data.clients.length))}</strong>
+            <small>مشتری ثبت‌شده</small>
+          </span>
+        </article>
+      </section>
+      <section className="panel report-table">
+        {section === "projects" &&
+          data.projects.map((p) => (
+            <div key={p.id}>
+              <strong>{p.title}</strong>
+              <span>{p.client || "پروژه آزاد"}</span>
+              <span>
+                {
+                  data.tasks.filter(
+                    (t) => t.project === p.title && t.status === "done",
+                  ).length
+                }{" "}
+                انجام‌شده
+              </span>
+              <span>
+                {
+                  data.tasks.filter(
+                    (t) =>
+                      t.project === p.title &&
+                      !["done", "cancelled"].includes(t.status),
+                  ).length
+                }{" "}
+                باز
+              </span>
+            </div>
+          ))}
+        {section === "clients" &&
+          data.clients.map((c) => (
+            <div key={c.id}>
+              <strong>{c.name}</strong>
+              <span>{c.company}</span>
+              <span>{c.service}</span>
+              <span>
+                {data.projects.filter((p) => p.client === c.company).length}{" "}
+                پروژه
+              </span>
+            </div>
+          ))}
+        {section === "tasks" &&
+          done.map((t) => (
+            <div key={t.id}>
+              <strong>{t.title}</strong>
+              <span>{t.project}</span>
+              <span>{t.assignee}</span>
+              <span>{t.archivedAt || t.endDate}</span>
+            </div>
+          ))}
+        {section === "team" &&
+          data.members.map((m) => (
+            <div key={m.id}>
+              <strong>{m.name}</strong>
+              <span>{m.role}</span>
+              <span>
+                {
+                  data.tasks.filter(
+                    (t) => t.assignee === m.name && t.status === "done",
+                  ).length
+                }{" "}
+                تکمیل‌شده
+              </span>
+              <span>
+                {data.attendance.filter((a) => a.memberId === m.id).length} روز
+                حضور
+              </span>
+            </div>
+          ))}
+        {section === "finance" &&
+          data.transactions.map((t) => (
+            <div key={t.id}>
+              <strong>{t.title}</strong>
+              <span>{t.project}</span>
+              <span>{money(t.amount)}</span>
+              <span>{t.status === "paid" ? "پرداخت‌شده" : "باز"}</span>
+            </div>
+          ))}
+      </section>
+    </>
+  );
+}
 
-function downloadWorkspaceReport(section:string,data:Workspace){
-  const rows:Record<string,string|number>[] = section==="projects"
-    ? data.projects.map(p=>({پروژه:p.title,مشتری:p.client||"پروژه آزاد"}))
-    : section==="clients"
-      ? data.clients.map(c=>({نام:c.name,شرکت:c.company,خدمت:c.service,تلفن:c.phone,ایمیل:c.email}))
-      : section==="tasks"
-        ? data.tasks.filter(t=>t.status==="done").map(t=>({وظیفه:t.title,پروژه:t.project,مسئول:t.assignee,تاریخ:t.archivedAt||t.endDate||t.due}))
-        : section==="team"
-          ? data.members.map(m=>({نام:m.name,نقش:m.role,ایمیل:m.email}))
-          : data.transactions.map(t=>({سند:t.title,پروژه:t.project,نوع:t.type,مبلغ:t.amount,تاریخ:t.date,وضعیت:t.status}));
-  if(!rows.length){toast.error("داده‌ای برای خروجی وجود ندارد");return}
-  const headers=Object.keys(rows[0]);
-  const escape=(value:string|number)=>`"${String(value??"").replaceAll('"','""')}"`;
-  const csv="\uFEFF"+[headers.join(","),...rows.map(row=>headers.map(header=>escape(row[header])).join(","))].join("\n");
-  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
-  const link=document.createElement("a");link.href=url;link.download=`kalameh-${section}-${Date.now()}.csv`;link.click();URL.revokeObjectURL(url);
+function downloadWorkspaceReport(section: string, data: Workspace) {
+  const rows: Record<string, string | number>[] =
+    section === "projects"
+      ? data.projects.map((p) => ({
+          پروژه: p.title,
+          مشتری: p.client || "پروژه آزاد",
+        }))
+      : section === "clients"
+        ? data.clients.map((c) => ({
+            نام: c.name,
+            شرکت: c.company,
+            خدمت: c.service,
+            تلفن: c.phone,
+            ایمیل: c.email,
+          }))
+        : section === "tasks"
+          ? data.tasks
+              .filter((t) => t.status === "done")
+              .map((t) => ({
+                وظیفه: t.title,
+                پروژه: t.project,
+                مسئول: t.assignee,
+                تاریخ: t.archivedAt || t.endDate || t.due,
+              }))
+          : section === "team"
+            ? data.members.map((m) => ({
+                نام: m.name,
+                نقش: m.role,
+                ایمیل: m.email,
+              }))
+            : data.transactions.map((t) => ({
+                سند: t.title,
+                پروژه: t.project,
+                نوع: t.type,
+                مبلغ: t.amount,
+                تاریخ: t.date,
+                وضعیت: t.status,
+              }));
+  if (!rows.length) {
+    toast.error("داده‌ای برای خروجی وجود ندارد");
+    return;
+  }
+  const headers = Object.keys(rows[0]);
+  const escape = (value: string | number) =>
+    `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv =
+    "\uFEFF" +
+    [
+      headers.join(","),
+      ...rows.map((row) =>
+        headers.map((header) => escape(row[header])).join(","),
+      ),
+    ].join("\n");
+  const url = URL.createObjectURL(
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `kalameh-${section}-${Date.now()}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
   toast.success("گزارش دانلود شد");
 }
 
-function GlobalSearchResults({query,data,onProject,onView,close}:{query:string;data:Workspace;onProject:(project:Project)=>void;onView:(view:View)=>void;close:()=>void}) {
-  const clean=(value:string)=>value.toLocaleLowerCase("fa").replace(/[يى]/g,"ی").replace(/ك/g,"ک").replace(/\s+/g," ").trim();
-  const needle=clean(query);
-  const projects=data.projects.filter(p=>clean(`${p.title} ${p.client||""} ${p.service} ${p.manager}`).includes(needle)).slice(0,4);
-  const tasks=data.tasks.filter(t=>clean(`${t.title} ${t.description} ${t.project} ${t.assignee} ${t.label}`).includes(needle)).slice(0,5);
-  const clients=data.clients.filter(c=>clean(`${c.name} ${c.company} ${c.phone} ${c.service}`).includes(needle)).slice(0,3);
-  const members=data.members.filter(m=>clean(`${m.name} ${m.email} ${m.role}`).includes(needle)).slice(0,3);
-  const total=projects.length+tasks.length+clients.length+members.length;
-  return <div className="smart-search-results">
-    <header><span><Search/> نتایج جست‌وجو</span><button onClick={close}><X/></button></header>
-    {!total&&<div className="search-empty">نتیجه‌ای پیدا نشد؛ نام پروژه، مشتری، تسک یا همکار را کامل‌تر بنویسید.</div>}
-    {projects.length>0&&<section><h4>پروژه‌ها</h4>{projects.map(p=><button key={p.id} onClick={()=>onProject(p)}><span className="search-result-icon project"><FolderKanban/></span><span><strong>{p.title}</strong><small>{p.client||"پروژه آزاد"} · {p.service}</small></span><ArrowLeft/></button>)}</section>}
-    {tasks.length>0&&<section><h4>تسک‌ها</h4>{tasks.map(t=><button key={t.id} onClick={()=>onView("tasks")}><span className="search-result-icon task"><ListChecks/></span><span><strong>{t.title}</strong><small>{t.project} · {t.assignee}</small></span><ArrowLeft/></button>)}</section>}
-    {(clients.length>0||members.length>0)&&<section><h4>افراد و مشتریان</h4>{clients.map(c=><button key={`c-${c.id}`} onClick={()=>onView("clients")}><span className="search-result-icon client"><UserRoundCheck/></span><span><strong>{c.name}</strong><small>{c.company} · {c.service}</small></span><ArrowLeft/></button>)}{members.map(m=><button key={`m-${m.id}`} onClick={()=>onView("team")}><span className="search-result-icon member"><Users/></span><span><strong>{m.name}</strong><small>{m.role}</small></span><ArrowLeft/></button>)}</section>}
-  </div>
+function GlobalSearchResults({
+  query,
+  data,
+  onProject,
+  onView,
+  close,
+}: {
+  query: string;
+  data: Workspace;
+  onProject: (project: Project) => void;
+  onView: (view: View) => void;
+  close: () => void;
+}) {
+  const clean = (value: string) =>
+    value
+      .toLocaleLowerCase("fa")
+      .replace(/[يى]/g, "ی")
+      .replace(/ك/g, "ک")
+      .replace(/\s+/g, " ")
+      .trim();
+  const needle = clean(query);
+  const projects = data.projects
+    .filter((p) =>
+      clean(`${p.title} ${p.client || ""} ${p.service} ${p.manager}`).includes(
+        needle,
+      ),
+    )
+    .slice(0, 4);
+  const tasks = data.tasks
+    .filter((t) =>
+      clean(
+        `${t.title} ${t.description} ${t.project} ${t.assignee} ${t.label}`,
+      ).includes(needle),
+    )
+    .slice(0, 5);
+  const clients = data.clients
+    .filter((c) =>
+      clean(`${c.name} ${c.company} ${c.phone} ${c.service}`).includes(needle),
+    )
+    .slice(0, 3);
+  const members = data.members
+    .filter((m) => clean(`${m.name} ${m.email} ${m.role}`).includes(needle))
+    .slice(0, 3);
+  const total =
+    projects.length + tasks.length + clients.length + members.length;
+  return (
+    <div className="smart-search-results">
+      <header>
+        <span>
+          <Search /> نتایج جست‌وجو
+        </span>
+        <button onClick={close}>
+          <X />
+        </button>
+      </header>
+      {!total && (
+        <div className="search-empty">
+          نتیجه‌ای پیدا نشد؛ نام پروژه، مشتری، تسک یا همکار را کامل‌تر بنویسید.
+        </div>
+      )}
+      {projects.length > 0 && (
+        <section>
+          <h4>پروژه‌ها</h4>
+          {projects.map((p) => (
+            <button key={p.id} onClick={() => onProject(p)}>
+              <span className="search-result-icon project">
+                <FolderKanban />
+              </span>
+              <span>
+                <strong>{p.title}</strong>
+                <small>
+                  {p.client || "پروژه آزاد"} · {p.service}
+                </small>
+              </span>
+              <ArrowLeft />
+            </button>
+          ))}
+        </section>
+      )}
+      {tasks.length > 0 && (
+        <section>
+          <h4>تسک‌ها</h4>
+          {tasks.map((t) => (
+            <button key={t.id} onClick={() => onView("tasks")}>
+              <span className="search-result-icon task">
+                <ListChecks />
+              </span>
+              <span>
+                <strong>{t.title}</strong>
+                <small>
+                  {t.project} · {t.assignee}
+                </small>
+              </span>
+              <ArrowLeft />
+            </button>
+          ))}
+        </section>
+      )}
+      {(clients.length > 0 || members.length > 0) && (
+        <section>
+          <h4>افراد و مشتریان</h4>
+          {clients.map((c) => (
+            <button key={`c-${c.id}`} onClick={() => onView("clients")}>
+              <span className="search-result-icon client">
+                <UserRoundCheck />
+              </span>
+              <span>
+                <strong>{c.name}</strong>
+                <small>
+                  {c.company} · {c.service}
+                </small>
+              </span>
+              <ArrowLeft />
+            </button>
+          ))}
+          {members.map((m) => (
+            <button key={`m-${m.id}`} onClick={() => onView("team")}>
+              <span className="search-result-icon member">
+                <Users />
+              </span>
+              <span>
+                <strong>{m.name}</strong>
+                <small>{m.role}</small>
+              </span>
+              <ArrowLeft />
+            </button>
+          ))}
+        </section>
+      )}
+    </div>
+  );
 }
 
 function PageTitle({
@@ -1784,139 +2907,6 @@ function PageTitle({
     </div>
   );
 }
-function Stat({
-  icon: Icon,
-  title,
-  value,
-  hint,
-  color,
-}: {
-  icon: React.ElementType;
-  title: string;
-  value: string;
-  hint: string;
-  color: string;
-}) {
-  return (
-    <div className="stat-card">
-      <div className="stat-icon" style={{ background: `${color}17`, color }}>
-        <Icon size={23} />
-      </div>
-      <div className="stat-copy">
-        <span>{title}</span>
-        <strong>{value}</strong>
-        <small>{hint}</small>
-      </div>
-    </div>
-  );
-}
-function Dashboard({
-  data,
-  totals,
-  setView,
-}: {
-  data: Workspace;
-  totals: { income: number; expense: number; receivable: number };
-  setView: (v: View) => void;
-}) {
-  return (
-    <>
-      <PageTitle
-        title="سلام، روز بخیر"
-        subtitle="خلاصه وضعیت امروز آژانس تبلیغاتی کلمه"
-      >
-        <Button onClick={() => setView("tasks")}>
-          <Plus size={17} /> وظیفه جدید
-        </Button>
-      </PageTitle>
-      <section className="stats-grid">
-        <Stat
-          icon={FolderKanban}
-          title="پروژه فعال"
-          value={String(data.projects.length)}
-          hint="در حال اجرا"
-          color="#6a58c7"
-        />
-        <Stat
-          icon={ListChecks}
-          title="کارهای باز"
-          value={String(data.tasks.filter((t) => t.status !== "done").length)}
-          hint="در همه پروژه‌ها"
-          color="#2786d8"
-        />
-        <Stat
-          icon={Clock3}
-          title="وظایف لغوشده"
-          value={String(
-            data.tasks.filter((t) => t.status === "cancelled").length,
-          )}
-          hint="قابل بازگردانی"
-          color="#f29b36"
-        />
-        <Stat
-          icon={CircleDollarSign}
-          title="مطالبات"
-          value={money(totals.receivable)}
-          hint="ثبت‌شده این ماه"
-          color="#e95a57"
-        />
-      </section>
-      <section className="dashboard-grid">
-        <div className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>کارهای امروز</h2>
-              <span>وظایف مهم تیم</span>
-            </div>
-            <Button variant="ghost" onClick={() => setView("tasks")}>
-              مشاهده همه <ArrowLeft size={15} />
-            </Button>
-          </div>
-          {data.tasks.slice(0, 5).map((t) => (
-            <div className="compact-task" key={t.id}>
-              <span
-                className={`task-check ${t.status === "done" ? "checked" : ""}`}
-              >
-                {t.status === "done" && <Check size={14} />}
-              </span>
-              <span className="compact-copy">
-                <strong>{t.title}</strong>
-                <small>
-                  {t.project} · {t.assignee}
-                </small>
-              </span>
-              <Badge className={`status status-${t.status}`}>
-                {columns.find((c) => c.id === t.status)?.title}
-              </Badge>
-            </div>
-          ))}
-        </div>
-        <div className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>جریان مالی</h2>
-              <span>{monthTitle(currentJalaliMonth())}</span>
-            </div>
-          </div>
-          <div className="finance-mini">
-            <span>
-              <TrendingUp />
-              درآمد <b>{money(totals.income)}</b>
-            </span>
-            <span>
-              <TrendingDown />
-              هزینه <b>{money(totals.expense)}</b>
-            </span>
-            <span>
-              <WalletCards />
-              مانده <b>{money(totals.income - totals.expense)}</b>
-            </span>
-          </div>
-        </div>
-      </section>
-    </>
-  );
-}
 function Projects({
   projects,
   tasks,
@@ -1935,7 +2925,32 @@ function Projects({
           <Plus size={17} /> افزودن پروژه
         </Button>
       </PageTitle>
-      <div className="projects-overview"><span><FolderKanban/><b>{faDigits(String(projects.length))}</b><small>پروژه فعال</small></span><span><ListChecks/><b>{faDigits(String(tasks.filter(t=>!["done","cancelled"].includes(t.status)).length))}</b><small>تسک باز</small></span><span><CheckCircle2/><b>{faDigits(String(tasks.filter(t=>t.status==="done").length))}</b><small>تکمیل‌شده</small></span></div>
+      <div className="projects-overview">
+        <span>
+          <FolderKanban />
+          <b>{faDigits(String(projects.length))}</b>
+          <small>پروژه فعال</small>
+        </span>
+        <span>
+          <ListChecks />
+          <b>
+            {faDigits(
+              String(
+                tasks.filter((t) => !["done", "cancelled"].includes(t.status))
+                  .length,
+              ),
+            )}
+          </b>
+          <small>تسک باز</small>
+        </span>
+        <span>
+          <CheckCircle2 />
+          <b>
+            {faDigits(String(tasks.filter((t) => t.status === "done").length))}
+          </b>
+          <small>تکمیل‌شده</small>
+        </span>
+      </div>
       <div className="projects-grid">
         {projects.map((p) => {
           const related = tasks.filter((t) => t.project === p.title),
@@ -1946,7 +2961,7 @@ function Projects({
           return (
             <button
               className="project-card"
-              style={{"--project-color":p.color} as React.CSSProperties}
+              style={{ "--project-color": p.color } as React.CSSProperties}
               key={p.id}
               onClick={() => onOpen(p)}
             >
@@ -1955,7 +2970,11 @@ function Projects({
                   className="project-avatar"
                   style={{ background: p.color }}
                 >
-                  {p.logo?<img src={p.logo.url} alt={`لوگوی ${p.title}`}/>:p.title[0]}
+                  {p.logo ? (
+                    <img src={p.logo.url} alt={`لوگوی ${p.title}`} />
+                  ) : (
+                    p.title[0]
+                  )}
                 </span>
                 <span className="project-title">
                   <strong>{p.title}</strong>
@@ -1972,654 +2991,27 @@ function Projects({
                 <Progress value={pct} />
               </div>
               <footer className="project-card-foot">
-                <span><ListChecks/> <b>{faDigits(String(related.filter(t=>!["done","cancelled"].includes(t.status)).length))}</b> کار باز</span>
-                <span><UserRound/> {p.manager}</span>
-                <ArrowLeft className="project-open-arrow"/>
+                <span>
+                  <ListChecks />{" "}
+                  <b>
+                    {faDigits(
+                      String(
+                        related.filter(
+                          (t) => !["done", "cancelled"].includes(t.status),
+                        ).length,
+                      ),
+                    )}
+                  </b>{" "}
+                  کار باز
+                </span>
+                <span>
+                  <UserRound /> {p.manager}
+                </span>
+                <ArrowLeft className="project-open-arrow" />
               </footer>
             </button>
           );
         })}
-      </div>
-    </>
-  );
-}
-function Tasks({
-  tasks,
-  onAdd,
-  onMove,
-  onEdit,
-  onDelete,
-  dragged,
-  setDragged,
-}: {
-  tasks: Task[];
-  onAdd: () => void;
-  onMove: (id: number, s: TaskStatus) => void;
-  onEdit: (id: number) => void;
-  onDelete: (id: number) => void;
-  dragged: number | null;
-  setDragged: (id: number | null) => void;
-}) {
-  return (
-    <>
-      <PageTitle title="وظایف" subtitle="وظایف محول‌شده به اعضای تیم">
-        <Button onClick={onAdd}>
-          <Plus size={17} /> افزودن وظیفه
-        </Button>
-      </PageTitle>
-      <div className="kanban board-page">
-        {columns.map((col) => (
-          <section
-            className="kanban-column"
-            key={col.id}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => dragged && onMove(dragged, col.id)}
-          >
-            <header>
-              <span>
-                <i style={{ background: col.color }} />
-                {col.title}
-              </span>
-              <b>{tasks.filter((t) => t.status === col.id).length}</b>
-            </header>
-            <div className="kanban-cards">
-              {tasks
-                .filter((t) => t.status === col.id)
-                .map((t) => (
-                  <article
-                    className="kanban-card"
-                    key={t.id}
-                    draggable
-                    onDragStart={() => setDragged(t.id)}
-                  >
-                    <div className="card-grip">
-                      <GripVertical size={16} />
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="icon-button">
-                            <MoreVertical size={16} />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => onEdit(t.id)}>
-                            <Edit3 /> ویرایش وظیفه
-                          </DropdownMenuItem>
-                          {t.status !== "done" && (
-                            <DropdownMenuItem
-                              onClick={() => onMove(t.id, "done")}
-                            >
-                              <CheckCircle2 /> انتقال به انجام شده
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="danger-item"
-                            onClick={() => onDelete(t.id)}
-                          >
-                            <Trash2 /> حذف وظیفه
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                    <h3>{t.title}</h3>
-                    <p>{t.description}</p>
-                    <Badge variant="outline">{t.project}</Badge>
-                    <footer>
-                      <span className="task-meta">
-                        <Avatar className="avatar">
-                          <AvatarFallback>
-                            {initials(t.assignee)}
-                          </AvatarFallback>
-                        </Avatar>
-                        {t.assignee}
-                      </span>
-                      <span>{t.due}</span>
-                    </footer>
-                  </article>
-                ))}
-            </div>
-            <button className="add-card" onClick={onAdd}>
-              <Plus size={16} /> افزودن وظیفه
-            </button>
-          </section>
-        ))}
-      </div>
-    </>
-  );
-}
-function Finance({
-  rows,
-  totals,
-  onAdd,
-  onEdit,
-  onDelete,
-  onStatus,
-}: {
-  rows: Transaction[];
-  totals: { income: number; expense: number; receivable: number };
-  onAdd: () => void;
-  onEdit: (id: number) => void;
-  onDelete: (id: number) => void;
-  onStatus: (id: number, s: Transaction["status"]) => void;
-}) {
-  return (
-    <>
-      <PageTitle title="مدیریت مالی" subtitle="ثبت، ویرایش و پیگیری اسناد مالی">
-        <Button variant="outline">
-          <FileText size={16} /> خروجی گزارش
-        </Button>
-        <Button onClick={onAdd}>
-          <Plus size={17} /> ثبت سند
-        </Button>
-      </PageTitle>
-      <section className="stats-grid">
-        <Stat
-          icon={TrendingUp}
-          title="درآمد"
-          value={money(totals.income)}
-          hint="این ماه"
-          color="#2eaf74"
-        />
-        <Stat
-          icon={TrendingDown}
-          title="هزینه"
-          value={money(totals.expense)}
-          hint="این ماه"
-          color="#ef5350"
-        />
-        <Stat
-          icon={WalletCards}
-          title="مطالبات"
-          value={money(totals.receivable)}
-          hint="نیازمند پیگیری"
-          color="#ff9800"
-        />
-        <Stat
-          icon={BarChart3}
-          title="مانده خالص"
-          value={money(totals.income - totals.expense)}
-          hint="درآمد منهای هزینه"
-          color="#5c6bc0"
-        />
-      </section>
-      <section className="panel table-panel">
-        <div className="panel-head">
-          <div>
-            <h2>آخرین اسناد مالی</h2>
-            <span>{rows.length} سند ثبت شده</span>
-          </div>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>شرح</TableHead>
-              <TableHead>پروژه</TableHead>
-              <TableHead>نوع</TableHead>
-              <TableHead>تاریخ</TableHead>
-              <TableHead>مبلغ</TableHead>
-              <TableHead>وضعیت</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell>
-                  <strong>{t.title}</strong>
-                </TableCell>
-                <TableCell>{t.project}</TableCell>
-                <TableCell>
-                  <Badge className={`transaction type-${t.type}`}>
-                    {t.type === "income"
-                      ? "درآمد"
-                      : t.type === "expense"
-                        ? "هزینه"
-                        : t.type === "payable" ? "بدهی" : "طلب"}
-                  </Badge>
-                </TableCell>
-                <TableCell>{t.date}</TableCell>
-                <TableCell
-                  className={t.type === "expense" ? "amount expense" : "amount"}
-                >
-                  {money(t.amount)}
-                </TableCell>
-                <TableCell>
-                  <select
-                    className={`status-select pay-${t.status}`}
-                    value={t.status}
-                    onChange={(e) =>
-                      onStatus(t.id, e.target.value as Transaction["status"])
-                    }
-                  >
-                    <option value="paid">پرداخت شده</option>
-                    <option value="pending">در انتظار</option>
-                    <option value="overdue">سررسید گذشته</option>
-                  </select>
-                </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="icon-button">
-                        <MoreVertical size={17} />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onEdit(t.id)}>
-                        <Edit3 /> ویرایش سند
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="danger-item"
-                        onClick={() => onDelete(t.id)}
-                      >
-                        <Trash2 /> حذف سند
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
-    </>
-  );
-}
-function Clients({ clients, onAdd }: { clients: Client[]; onAdd: () => void }) {
-  return (
-    <>
-      <PageTitle
-        title="مشتریان"
-        subtitle={String(clients.length) + " مشتری ثبت شده"}
-      >
-        <Button onClick={onAdd}>
-          <Plus size={17} /> ثبت مشتری جدید
-        </Button>
-      </PageTitle>
-      <section className="panel table-panel">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>مشتری</TableHead>
-              <TableHead>شرکت</TableHead>
-              <TableHead>تلفن</TableHead>
-              <TableHead>ایمیل</TableHead>
-              <TableHead>خدمت</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {clients.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell>
-                  <div className="client-name">
-                    <Avatar className="avatar">
-                      <AvatarFallback>{initials(c.name)}</AvatarFallback>
-                    </Avatar>
-                    <strong>{c.name}</strong>
-                  </div>
-                </TableCell>
-                <TableCell>{c.company}</TableCell>
-                <TableCell>{c.phone}</TableCell>
-                <TableCell>{c.email}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{c.service}</Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
-    </>
-  );
-}
-function Team({
-  members,
-  tasks,
-  onAdd,
-  onAccess,
-  onDelete,
-}: {
-  members: Member[];
-  tasks: Task[];
-  onAdd: () => void;
-  onAccess: (m: Member) => void;
-  onDelete: (id: number) => void;
-}) {
-  return (
-    <>
-      <PageTitle title="اعضای تیم" subtitle="ساخت کاربر، نقش‌ها و سطح دسترسی">
-        <Button onClick={onAdd}>
-          <UserPlus size={17} /> ساخت کاربر جدید
-        </Button>
-      </PageTitle>
-      <section className="team-grid">
-        {members.map((m) => (
-          <article className="member-card" key={m.id}>
-            <div className="member-top">
-              <Avatar className="member-avatar">
-                <AvatarImage src={m.avatar?.url} />
-                <AvatarFallback>{initials(m.name)}</AvatarFallback>
-              </Avatar>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="icon-button">
-                    <MoreVertical size={18} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => onAccess(m)}>
-                    <ShieldCheck /> ویرایش دسترسی
-                  </DropdownMenuItem>
-                  {m.id !== 1 && (
-                    <DropdownMenuItem
-                      className="danger-item"
-                      onClick={() => onDelete(m.id)}
-                    >
-                      <Trash2 /> حذف کاربر
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-            <h3>{m.name}</h3>
-            <p>{m.email}</p>
-            <div className="member-meta">
-              <span>{m.role}</span>
-              <span>
-                {
-                  tasks.filter(
-                    (t) => t.assignee === m.name && t.status !== "done",
-                  ).length
-                }{" "}
-                کار باز
-              </span>
-            </div>
-            <div className="member-actions">
-              <Button variant="outline" onClick={() => onAccess(m)}>
-                <LockKeyhole size={15} /> دسترسی‌ها
-              </Button>
-              <Badge variant={m.status === "فعال" ? "default" : "outline"}>
-                {m.status}
-              </Badge>
-            </div>
-          </article>
-        ))}
-      </section>
-    </>
-  );
-}
-function Messages({
-  chats,
-  selected,
-  setSelected,
-  message,
-  setMessage,
-  send,
-  onGroup,
-}: {
-  chats: Chat[];
-  selected: number;
-  setSelected: (n: number) => void;
-  message: string;
-  setMessage: (s: string) => void;
-  send: () => void;
-  onGroup: () => void;
-}) {
-  const chat = chats.find((c) => c.id === selected) || chats[0];
-  return (
-    <>
-      <PageTitle title="پیام‌ها" subtitle="گفت‌وگوی مستقیم و گروه‌های کاری">
-        <Button onClick={onGroup}>
-          <Plus size={17} /> گروه جدید
-        </Button>
-      </PageTitle>
-      <section className="messages-layout">
-        <aside className="panel chat-list">
-          <div className="search-box compact">
-            <Search size={16} />
-            <input placeholder="جستجوی گفتگو..." />
-          </div>
-          {chats.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelected(c.id)}
-              className={`chat-person ${c.id === selected ? "active" : ""}`}
-            >
-              <Avatar className="avatar">
-                <AvatarFallback>
-                  {c.group ? "گ" : initials(c.name)}
-                </AvatarFallback>
-              </Avatar>
-              <span>
-                <strong>{c.name}</strong>
-                <small>{c.messages.at(-1)?.text || "گفتگوی جدید"}</small>
-              </span>
-              <em>{c.group ? `${c.members.length} عضو` : ""}</em>
-            </button>
-          ))}
-        </aside>
-        <div className="panel conversation">
-          <header>
-            <Avatar className="avatar">
-              <AvatarFallback>
-                {chat?.group ? "گ" : initials(chat?.name || "")}
-              </AvatarFallback>
-            </Avatar>
-            <span>
-              <strong>{chat?.name}</strong>
-              <small>
-                {chat?.group ? `${chat.members.length} عضو` : "آنلاین"}
-              </small>
-            </span>
-            <button className="icon-button">
-              <MoreVertical size={18} />
-            </button>
-          </header>
-          <div className="conversation-body">
-            {chat?.messages.map((m) => (
-              <div key={m.id} className={`bubble ${m.mine ? "mine" : "other"}`}>
-                {m.text}
-                <small>{m.time}</small>
-              </div>
-            ))}
-          </div>
-          <footer>
-            <Button variant="ghost" size="icon">
-              <Paperclip />
-            </Button>
-            <input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") send();
-              }}
-              placeholder="پیام خود را بنویسید..."
-            />
-            <Button size="icon" onClick={send}>
-              <Send size={17} />
-            </Button>
-          </footer>
-        </div>
-      </section>
-    </>
-  );
-}
-function Letters({
-  letters,
-  onAdd,
-  onRead,
-}: {
-  letters: Letter[];
-  onAdd: () => void;
-  onRead: (id: number) => void;
-}) {
-  return (
-    <>
-      <PageTitle title="نامه‌ها" subtitle="کارتابل حرفه‌ای مکاتبات داخلی">
-        <Button onClick={onAdd}>
-          <FilePlus2 size={17} /> ایجاد نامه
-        </Button>
-      </PageTitle>
-      <Tabs defaultValue="in" className="main-tabs">
-        <TabsList variant="line">
-          <TabsTrigger value="in">
-            <Inbox /> صندوق ورودی
-          </TabsTrigger>
-          <TabsTrigger value="out">
-            <Send /> ارسالی‌ها
-          </TabsTrigger>
-          <TabsTrigger value="archive">
-            <Archive /> آرشیو
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="in">
-          <section className="panel table-panel">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>موضوع</TableHead>
-                  <TableHead>فرستنده</TableHead>
-                  <TableHead>گیرنده</TableHead>
-                  <TableHead>تاریخ</TableHead>
-                  <TableHead>وضعیت</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {letters.map((l) => (
-                  <TableRow
-                    key={l.id}
-                    className={l.status === "جدید" ? "unread-row" : ""}
-                  >
-                    <TableCell>
-                      <span className="letter-title">
-                        <Mail size={17} />
-                        <strong>{l.subject}</strong>
-                      </span>
-                    </TableCell>
-                    <TableCell>{l.from}</TableCell>
-                    <TableCell>{l.to}</TableCell>
-                    <TableCell>{l.date}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{l.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onRead(l.id)}
-                      >
-                        مشاهده
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </section>
-        </TabsContent>
-        <TabsContent value="out">
-          <div className="panel empty-state">
-            نامه‌های ارسال‌شده در همین کارتابل قابل پیگیری هستند.
-          </div>
-        </TabsContent>
-        <TabsContent value="archive">
-          <div className="panel empty-state">
-            هنوز نامه‌ای بایگانی نشده است.
-          </div>
-        </TabsContent>
-      </Tabs>
-    </>
-  );
-}
-function SettingsView({
-  fontScale,
-  setFontScale,
-  theme,
-  setTheme,
-}: {
-  fontScale: number;
-  setFontScale: (n: number) => void;
-  theme: string;
-  setTheme: (s: string) => void;
-}) {
-  return (
-    <>
-      <PageTitle
-        title="تنظیمات میزکار"
-        subtitle="ظاهر، خوانایی و تنظیمات عمومی"
-      />
-      <div className="settings-grid">
-        <section className="panel setting-card">
-          <div className="setting-icon">
-            <Settings />
-          </div>
-          <div>
-            <h2>اندازه نوشته‌ها</h2>
-            <p>
-              اندازه متن همه بخش‌های پنل را متناسب با نمایشگر خود تنظیم کنید.
-            </p>
-          </div>
-          <div className="font-options">
-            {[
-              [0.94, "کوچک"],
-              [1, "استاندارد"],
-              [1.1, "درشت"],
-              [1.18, "خیلی درشت"],
-            ].map(([v, l]) => (
-              <button
-                key={String(v)}
-                className={fontScale === v ? "active" : ""}
-                onClick={() => setFontScale(v as number)}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel setting-card">
-          <div className="setting-icon">
-            <SlidersHorizontal />
-          </div>
-          <div>
-            <h2>رنگ‌بندی پنل</h2>
-            <p>
-              تم انتخابی فقط ظاهر پنل را تغییر می‌دهد و اطلاعات دست‌نخورده
-              می‌ماند.
-            </p>
-          </div>
-          <div className="theme-options">
-            {[
-              ["violet", "آبی سازمانی", "#012BF9"],
-              ["blue", "آبی روشن", "#3156ff"],
-              ["teal", "سبزآبی", "#168b85"],
-              ["dark", "تیره", "#232638"],
-            ].map(([v, l, c]) => (
-              <button
-                key={v}
-                className={theme === v ? "active" : ""}
-                onClick={() => setTheme(v)}
-              >
-                <i style={{ background: c }} />
-                {l}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel setting-row">
-          <div>
-            <h3>اعلان وظایف نزدیک سررسید</h3>
-            <p>دو روز قبل از مهلت انجام یادآوری نمایش داده شود.</p>
-          </div>
-          <Switch defaultChecked />
-        </section>
-        <section className="panel setting-row">
-          <div>
-            <h3>نمایش فعالیت آنلاین همکاران</h3>
-            <p>وضعیت حضور اعضای تیم در منوی کناری دیده شود.</p>
-          </div>
-          <Switch defaultChecked />
-        </section>
       </div>
     </>
   );
@@ -2696,237 +3088,6 @@ function Field({
         />
       )}
     </label>
-  );
-}
-function ProjectDialog({
-  open,
-  close,
-  clients,
-  members,
-  free,
-  setFree,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  clients: Client[];
-  members: Member[];
-  free: boolean;
-  setFree: (v: boolean) => void;
-  save: (p: Project) => void;
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="ایجاد پروژه جدید"
-      description="پروژه را به یک مشتری متصل کنید یا به‌صورت پروژه آزاد بسازید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          id: Date.now(),
-          title: d.title,
-          color: "#012BF9",
-          client: free ? null : d.client,
-          service: d.service,
-          manager: d.manager,
-          done: 0,
-          total: 0,
-        });
-      }}
-    >
-      <div className="free-project">
-        <Checkbox checked={free} onCheckedChange={(v) => setFree(Boolean(v))} />
-        <span>
-          <strong>پروژه آزاد است</strong>
-          <small>این پروژه مشتری ندارد.</small>
-        </span>
-      </div>
-      <div className="form-grid">
-        <Field label="عنوان پروژه" name="title" required />
-        <Field label="مشتری" name="client">
-          <select name="client" disabled={free} required={!free}>
-            {clients.map((c) => (
-              <option key={c.id} value={c.company}>
-                {c.company} — {c.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="نوع خدمت" name="service">
-          <select name="service">
-            <option>سئو سایت</option>
-            <option>طراحی سایت</option>
-            <option>گرافیک</option>
-            <option>تولید محتوا</option>
-            <option>پشتیبانی سایت</option>
-          </select>
-        </Field>
-        <Field label="مدیر پروژه" name="manager">
-          <select name="manager">
-            {members.map((m) => (
-              <option key={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-    </Modal>
-  );
-}
-function ProjectSettings({
-  open,
-  close,
-  project,
-  clients,
-  members,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  project: Project | null;
-  clients: Client[];
-  members: Member[];
-  save: (p: Project) => void;
-}) {
-  if (!project) return null;
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="تنظیمات پروژه"
-      description="اطلاعات پایه، مشتری و مدیر پروژه را ویرایش کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          ...project,
-          title: d.title,
-          client: d.client || null,
-          service: d.service,
-          manager: d.manager,
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field label="عنوان پروژه" name="title" defaultValue={project.title} />
-        <Field label="مشتری" name="client">
-          <select name="client" defaultValue={project.client || ""}>
-            <option value="">پروژه آزاد</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.company}>
-                {c.company}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="خدمت" name="service" defaultValue={project.service} />
-        <Field label="مدیر پروژه" name="manager">
-          <select name="manager" defaultValue={project.manager}>
-            {members.map((m) => (
-              <option key={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-    </Modal>
-  );
-}
-function TaskDialog({
-  open,
-  close,
-  task,
-  projects,
-  members,
-  save,
-  defaultProject,
-}: {
-  open: boolean;
-  close: () => void;
-  task?: Task;
-  projects: Project[];
-  members: Member[];
-  save: (t: Task) => void;
-  defaultProject?: string;
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title={task ? "ویرایش وظیفه" : "افزودن وظیفه"}
-      description="وظیفه را به پروژه و مسئول انجام محول کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e),
-          status = d.status as TaskStatus;
-        save({
-          id: task?.id || Date.now(),
-          title: d.title,
-          description: d.description,
-          project: d.project,
-          assignee: d.assignee,
-          due: d.due,
-          label: d.label,
-          status,
-          progress: status === "done" ? 100 : Number(d.progress || 0),
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field
-          label="عنوان وظیفه"
-          name="title"
-          defaultValue={task?.title}
-          wide
-          required
-        />
-        <Field label="پروژه" name="project">
-          <select name="project" defaultValue={task?.project || defaultProject}>
-            {projects.map((p) => (
-              <option key={p.id}>{p.title}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="مسئول انجام" name="assignee">
-          <select name="assignee" defaultValue={task?.assignee}>
-            {members
-              .filter((m) => m.status === "فعال")
-              .map((m) => (
-                <option key={m.id}>{m.name}</option>
-              ))}
-          </select>
-        </Field>
-        <Field
-          label="مهلت انجام"
-          name="due"
-          defaultValue={task?.due || "۲۵ شهریور"}
-        />
-        <Field
-          label="برچسب"
-          name="label"
-          defaultValue={task?.label || "عمومی"}
-        />
-        <Field label="وضعیت" name="status">
-          <select name="status" defaultValue={task?.status || "backlog"}>
-            {columns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field
-          label="درصد پیشرفت"
-          name="progress"
-          type="number"
-          defaultValue={String(task?.progress || 0)}
-        />
-        <label className="wide">
-          توضیحات
-          <Textarea name="description" defaultValue={task?.description} />
-        </label>
-      </div>
-    </Modal>
   );
 }
 function FinanceDialog({
@@ -3008,60 +3169,6 @@ function FinanceDialog({
     </Modal>
   );
 }
-function MemberDialog({
-  open,
-  close,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  save: (m: Member) => void;
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="ثبت همکار جدید"
-      description="اطلاعات همکار و نقش سازمانی را تعریف کنید."
-      submit="ثبت همکار"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          id: Date.now(),
-          name: d.name,
-          email: d.email,
-          role: d.role,
-          status: "فعال",
-          permissions: ["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "ارسال پیام"],
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" required />
-        <Field label="ایمیل ورود" name="email" type="email" required />
-        <Field label="نقش سازمانی" name="role">
-          <select name="role">
-            <option>کارشناس سئو</option>
-            <option>توسعه‌دهنده</option>
-            <option>طراح</option>
-            <option>مدیر پروژه</option>
-            <option>حسابدار</option>
-          </select>
-        </Field>
-      </div>
-      <div className="security-note">
-        <ShieldCheck />
-        <span>
-          <strong>آماده اتصال ورود امن</strong>
-          <small>
-            ورود با ایمیل و رمز در نسخه نهایی سامانه به بک‌اند امن متصل می‌شود.
-          </small>
-        </span>
-      </div>
-    </Modal>
-  );
-}
 function AccessDialog({
   open,
   close,
@@ -3074,7 +3181,10 @@ function AccessDialog({
   save: (m: Member) => void;
 }) {
   const [perms, setPerms] = useState<string[]>([]);
-  useEffect(() => setPerms(member?.permissions || []), [member]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh the editable dialog draft when its record changes
+    setPerms(member?.permissions || []);
+  }, [member]);
   if (!member) return null;
   const all = [
     "داشبورد",
@@ -3160,7 +3270,7 @@ function GroupDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           name: d.name,
           group: true,
           members: ["مدیر نمونه", ...picked],
@@ -3218,7 +3328,7 @@ function LetterDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           subject: d.subject,
           from: "مدیر نمونه",
           to: d.to,
@@ -3255,175 +3365,6 @@ function LetterDialog({
         </label>
       </div>
     </Modal>
-  );
-}
-function ProjectPanel({
-  project,
-  tasks,
-  members,
-  close,
-  onSettings,
-  onAddTask,
-  onMove,
-  onToggleSubtask,
-  onUpdateTask,
-  onUpdateProject,
-}: {
-  project: Project | null;
-  tasks: Task[];
-  members: Member[];
-  close: () => void;
-  onSettings: () => void;
-  onAddTask: () => void;
-  onMove: (id: number, s: TaskStatus) => void;
-  onToggleSubtask: (taskId:number, subtaskId:number) => void;
-  onUpdateTask:(task:Task)=>void;
-  onUpdateProject:(project:Project)=>void;
-}) {
-  if (!project) return null;
-  const list = tasks.filter((t) => t.project === project.title);
-  return (
-    <Dialog open={Boolean(project)} onOpenChange={(v) => !v && close()}>
-      <DialogContent className="project-dialog" showCloseButton={false}>
-        <div className="project-dialog-head">
-          <button className="icon-button" onClick={close}>
-            <X size={20} />
-          </button>
-          <div className="project-avatar" style={{ background: project.color }}>
-            {project.logo?<img src={project.logo.url} alt={`لوگوی ${project.title}`}/>:project.title[0]}
-          </div>
-          <div>
-            <h2>{project.title}</h2>
-            <span>
-              {project.client || "پروژه آزاد"} · {list.length} وظیفه
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            className="project-settings"
-            onClick={onSettings}
-          >
-            <Settings size={16} /> تنظیمات پروژه
-          </Button>
-          <Button onClick={onAddTask}>
-            <Plus size={16} /> افزودن وظیفه
-          </Button>
-        </div>
-        <Tabs defaultValue="board" className="project-tabs">
-          <TabsList variant="line">
-            <TabsTrigger value="board">بورد پروژه</TabsTrigger>
-            <TabsTrigger value="members">اعضای پروژه</TabsTrigger>
-          </TabsList>
-          <TabsContent value="board">
-            <div className="kanban">
-              {columns.map((c) => (
-                <section className="kanban-column" key={c.id}>
-                  <header>
-                    <span>
-                      <i style={{ background: c.color }} />
-                      {c.title}
-                    </span>
-                    <b>{list.filter((t) => t.status === c.id).length}</b>
-                  </header>
-                  {list
-                    .filter((t) => t.status === c.id)
-                    .map((t) => (
-                      <article className="kanban-card" key={t.id}>
-                        <h3>{t.title}</h3>
-                        <p>{t.assignee}</p>
-                        {t.status !== "done" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onMove(t.id, "done")}
-                          >
-                            <Check /> انجام شد
-                          </Button>
-                        )}
-                      </article>
-                    ))}
-                </section>
-              ))}
-            </div>
-          </TabsContent>
-          <TabsContent value="members">
-            <div className="project-member-list">
-              {members
-                .filter(
-                  (m) =>
-                    list.some((t) => t.assignee === m.name) ||
-                    m.name === project.manager,
-                )
-                .map((m) => (
-                  <div key={m.id}>
-                    <Avatar>
-                      <AvatarFallback>{initials(m.name)}</AvatarFallback>
-                    </Avatar>
-                    <span>
-                      <strong>{m.name}</strong>
-                      <small>{m.role}</small>
-                    </span>
-                  </div>
-                ))}
-            </div>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Leads({
-  leads,
-  onAdd,
-  onConvert,
-}: {
-  leads: Lead[];
-  onAdd: () => void;
-  onConvert: (l: Lead) => void;
-}) {
-  return (
-    <>
-      <PageTitle title="لیدها" subtitle={`${leads.length} فرصت فروش`}>
-        <Button onClick={onAdd}>
-          <Plus /> افزودن لید
-        </Button>
-      </PageTitle>
-      <section className="panel table-panel">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>نام</TableHead>
-              <TableHead>شرکت</TableHead>
-              <TableHead>تماس</TableHead>
-              <TableHead>خدمت</TableHead>
-              <TableHead>وضعیت</TableHead>
-              <TableHead>عملیات</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {leads.map((l) => (
-              <TableRow key={l.id}>
-                <TableCell>
-                  <strong>{l.name}</strong>
-                </TableCell>
-                <TableCell>{l.company}</TableCell>
-                <TableCell>{l.phone}</TableCell>
-                <TableCell>{l.service}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{l.status}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Button size="sm" onClick={() => onConvert(l)}>
-                    تبدیل به مشتری
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
-    </>
   );
 }
 function Contracts({
@@ -3467,98 +3408,6 @@ function Contracts({
     </>
   );
 }
-function ClientDialog({
-  open,
-  close,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  save: (c: Client) => void;
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="ثبت مشتری جدید"
-      description="اطلاعات تماس و خدمت مشتری را وارد کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          id: Date.now(),
-          name: d.name,
-          company: d.company,
-          phone: d.phone,
-          email: d.email,
-          website: d.website,
-          service: d.service,
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" required />
-        <Field label="نام شرکت" name="company" required />
-        <Field label="شماره تلفن" name="phone" required />
-        <Field label="ایمیل" name="email" type="email" />
-        <Field label="خدمت" name="service">
-          <select name="service">
-            <option>سئو سایت</option>
-            <option>طراحی سایت</option>
-            <option>گرافیک</option>
-            <option>تولید محتوا</option>
-          </select>
-        </Field>
-      </div>
-    </Modal>
-  );
-}
-function LeadDialog({
-  open,
-  close,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  save: (l: Lead) => void;
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="افزودن لید"
-      description="اطلاعات سرنخ فروش و مرحله پیگیری را ثبت کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          id: Date.now(),
-          name: d.name,
-          company: d.company,
-          phone: d.phone,
-          email: d.email,
-          service: d.service,
-          status: d.status as Lead["status"],
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" required />
-        <Field label="نام شرکت" name="company" required />
-        <Field label="شماره تلفن" name="phone" required />
-        <Field label="ایمیل" name="email" type="email" />
-        <Field label="خدمت" name="service" />
-        <Field label="وضعیت" name="status">
-          <select name="status">
-            <option>در حال مذاکره</option>
-            <option>منتظر قرارداد</option>
-            <option>پیگیری مجدد</option>
-          </select>
-        </Field>
-      </div>
-    </Modal>
-  );
-}
 function ContractDialog({
   open,
   close,
@@ -3581,7 +3430,7 @@ function ContractDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           title: d.title,
           client: d.client,
           date: d.date,
@@ -3625,461 +3474,6 @@ function ContractDialog({
 const faDigits = (value: string) =>
   value.replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 
-function ClientsPro({
-  clients,
-  onAdd,
-}: {
-  clients: Client[];
-  onAdd: () => void;
-}) {
-  return (
-    <>
-      <PageTitle title="مشتریان" subtitle={`${clients.length} مشتری ثبت شده`}>
-        <Button onClick={onAdd}>
-          <Plus size={17} /> ثبت مشتری جدید
-        </Button>
-      </PageTitle>
-      <section className="client-showcase">
-        {clients.slice(0, 3).map((c) => (
-          <article key={c.id} className="client-profile-card">
-            <div className="client-profile-head">
-              <Avatar className="member-avatar">
-                <AvatarFallback>{initials(c.name)}</AvatarFallback>
-              </Avatar>
-              <span>
-                <strong>{c.name}</strong>
-                <small>{c.company}</small>
-              </span>
-              <Badge>{c.service}</Badge>
-            </div>
-            <div className="client-contact-grid">
-              <span>
-                <small>شماره تماس</small>
-                <b className="phone-number">{faDigits(c.phone)}</b>
-              </span>
-              <span>
-                <small>ایمیل</small>
-                <b>{c.email}</b>
-              </span>
-            </div>
-          </article>
-        ))}
-      </section>
-      <section className="panel table-panel clients-table">
-        <div className="panel-head">
-          <div>
-            <h2>فهرست مشتریان</h2>
-            <span>اطلاعات تماس و خدمات فعال</span>
-          </div>
-          <div className="search-box compact">
-            <Search size={16} />
-            <input placeholder="جستجوی مشتری..." />
-          </div>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>نام مشتری</TableHead>
-              <TableHead>شرکت</TableHead>
-              <TableHead>خدمت</TableHead>
-              <TableHead>شماره تماس</TableHead>
-              <TableHead>ایمیل</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {clients.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell>
-                  <div className="client-name">
-                    <Avatar className="avatar">
-                      <AvatarFallback>{initials(c.name)}</AvatarFallback>
-                    </Avatar>
-                    <strong>{c.name}</strong>
-                  </div>
-                </TableCell>
-                <TableCell>{c.company}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{c.service}</Badge>
-                </TableCell>
-                <TableCell>
-                  <span className="phone-number">{faDigits(c.phone)}</span>
-                </TableCell>
-                <TableCell>
-                  <span className="latin-data">{c.email}</span>
-                </TableCell>
-                <TableCell>
-                  <button className="icon-button">
-                    <MoreVertical />
-                  </button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
-    </>
-  );
-}
-
-function SettingsPro({
-  fontScale,
-  setFontScale,
-  theme,
-  setTheme,
-  onSave,
-}: {
-  fontScale: number;
-  setFontScale: (n: number) => void;
-  theme: string;
-  setTheme: (s: string) => void;
-  onSave: () => void;
-}) {
-  return (
-    <>
-      <PageTitle
-        title="تنظیمات میزکار"
-        subtitle="ظاهر، خوانایی و تنظیمات عمومی"
-      >
-        <Button onClick={onSave}>
-          <Check size={17} /> ذخیره تنظیمات
-        </Button>
-      </PageTitle>
-      <div className="settings-grid">
-        <section className="panel setting-card">
-          <div className="setting-icon">
-            <Settings />
-          </div>
-          <div>
-            <h2>اندازه نوشته‌ها</h2>
-            <p>اندازه متن تمام بخش‌های پنل را انتخاب کنید.</p>
-          </div>
-          <div className="font-options">
-            {[
-              [0.94, "کوچک"],
-              [1, "استاندارد"],
-              [1.1, "درشت"],
-              [1.18, "خیلی درشت"],
-            ].map(([v, l]) => (
-              <button
-                key={String(v)}
-                className={fontScale === v ? "active" : ""}
-                onClick={() => setFontScale(v as number)}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel setting-card">
-          <div className="setting-icon">
-            <SlidersHorizontal />
-          </div>
-          <div>
-            <h2>رنگ‌بندی پنل</h2>
-            <p>تم دلخواه میزکار را انتخاب و سپس ذخیره کنید.</p>
-          </div>
-          <div className="theme-options">
-            {[
-              ["violet", "آبی سازمانی", "#012BF9"],
-              ["blue", "آبی روشن", "#3156ff"],
-              ["teal", "سبزآبی", "#168b85"],
-              ["dark", "تیره", "#232638"],
-            ].map(([v, l, c]) => (
-              <button
-                key={v}
-                className={theme === v ? "active" : ""}
-                onClick={() => setTheme(v)}
-              >
-                <i style={{ background: c }} />
-                {l}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel setting-row">
-          <div>
-            <h3>اعلان سررسید وظایف</h3>
-            <p>دو روز قبل از موعد، اعلان نمایش داده شود.</p>
-          </div>
-          <Switch defaultChecked />
-        </section>
-        <section className="panel setting-row">
-          <div>
-            <h3>نمایش وضعیت آنلاین</h3>
-            <p>حضور همکاران در منوی کناری نمایش داده شود.</p>
-          </div>
-          <Switch defaultChecked />
-        </section>
-      </div>
-      <div className="settings-save-bar">
-        <span>بعد از تغییرات، تنظیمات را ذخیره کنید.</span>
-        <Button onClick={onSave}>
-          <Check /> ذخیره تغییرات
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function MessagesPro({
-  chats,
-  selected,
-  setSelected,
-  message,
-  setMessage,
-  send,
-  onGroup,
-  upload,
-  file,
-}: {
-  chats: Chat[];
-  selected: number;
-  setSelected: (n: number) => void;
-  message: string;
-  setMessage: (s: string) => void;
-  send: () => void;
-  onGroup: () => void;
-  upload: (f: File) => void;
-  file: Attachment | null;
-}) {
-  const chat = chats.find((c) => c.id === selected) || chats[0];
-  return (
-    <>
-      <PageTitle title="پیام‌ها" subtitle="گفت‌وگوی مستقیم و گروه‌های کاری">
-        <Button onClick={onGroup}>
-          <Plus size={17} /> گروه جدید
-        </Button>
-      </PageTitle>
-      <section className="messages-layout">
-        <aside className="panel chat-list">
-          <div className="search-box compact">
-            <Search />
-            <input placeholder="جستجوی گفتگو..." />
-          </div>
-          {chats.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelected(c.id)}
-              className={`chat-person ${c.id === selected ? "active" : ""}`}
-            >
-              <Avatar className="avatar">
-                <AvatarFallback>
-                  {c.group ? "گ" : initials(c.name)}
-                </AvatarFallback>
-              </Avatar>
-              <span>
-                <strong>{c.name}</strong>
-                <small>
-                  {c.messages.at(-1)?.attachment?.name ||
-                    c.messages.at(-1)?.text ||
-                    "گفتگوی جدید"}
-                </small>
-              </span>
-              <em>{c.group ? `${c.members.length} عضو` : ""}</em>
-            </button>
-          ))}
-        </aside>
-        <div className="panel conversation">
-          <header>
-            <Avatar className="avatar">
-              <AvatarFallback>
-                {chat?.group ? "گ" : initials(chat?.name || "")}
-              </AvatarFallback>
-            </Avatar>
-            <span>
-              <strong>{chat?.name}</strong>
-              <small>
-                {chat?.group ? `${chat.members.length} عضو` : "آنلاین"}
-              </small>
-            </span>
-          </header>
-          <div className="conversation-body">
-            {chat?.messages.map((m) => (
-              <div key={m.id} className={`bubble ${m.mine ? "mine" : "other"}`}>
-                {m.text}
-                {m.attachment && (
-                  <a
-                    className="chat-attachment"
-                    href={m.attachment.url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <FileText />
-                    <span>
-                      <strong>{m.attachment.name}</strong>
-                      <small>
-                        {m.attachment.type.startsWith("image/")
-                          ? "تصویر"
-                          : "فایل پیوست"}
-                      </small>
-                    </span>
-                    <Download />
-                  </a>
-                )}
-                <small>{m.time}</small>
-              </div>
-            ))}
-          </div>
-          {file && (
-            <div className="pending-file">
-              <Paperclip />
-              <span>{file.name}</span>
-              <small>آماده ارسال</small>
-            </div>
-          )}
-          <footer>
-            <label className="chat-upload" title="ارسال عکس یا فایل">
-              <Paperclip />
-              <input
-                type="file"
-                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip"
-                onChange={(e) =>
-                  e.target.files?.[0] && upload(e.target.files[0])
-                }
-              />
-            </label>
-            <input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="پیام خود را بنویسید..."
-            />
-            <Button size="icon" onClick={send}>
-              <Send />
-            </Button>
-          </footer>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function LettersPro({
-  letters,
-  onAdd,
-  onRead,
-}: {
-  letters: Letter[];
-  onAdd: () => void;
-  onRead: (id: number) => void;
-}) {
-  const [selected, setSelected] = useState<Letter | null>(null);
-  const open = (l: Letter) => {
-    setSelected(l);
-    onRead(l.id);
-  };
-  return (
-    <>
-      <PageTitle title="نامه‌ها" subtitle="کارتابل مکاتبات داخلی">
-        <Button onClick={onAdd}>
-          <FilePlus2 /> ایجاد نامه
-        </Button>
-      </PageTitle>
-      <Tabs defaultValue="in" className="main-tabs">
-        <TabsList variant="line">
-          <TabsTrigger value="in">
-            <Inbox /> صندوق ورودی
-          </TabsTrigger>
-          <TabsTrigger value="out">
-            <Send /> ارسالی‌ها
-          </TabsTrigger>
-          <TabsTrigger value="archive">
-            <Archive /> آرشیو
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="in">
-          <section className="panel table-panel letters-table">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>موضوع نامه</TableHead>
-                  <TableHead>فرستنده</TableHead>
-                  <TableHead>گیرنده</TableHead>
-                  <TableHead>تاریخ</TableHead>
-                  <TableHead>وضعیت</TableHead>
-                  <TableHead className="letter-action-head">عملیات</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {letters.map((l) => (
-                  <TableRow
-                    key={l.id}
-                    className={l.status === "جدید" ? "unread-row" : ""}
-                  >
-                    <TableCell>
-                      <span className="letter-title">
-                        <Mail />
-                        <strong>{l.subject}</strong>
-                      </span>
-                    </TableCell>
-                    <TableCell>{l.from}</TableCell>
-                    <TableCell>{l.to}</TableCell>
-                    <TableCell>{l.date}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{l.status}</Badge>
-                    </TableCell>
-                    <TableCell className="letter-action">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => open(l)}
-                      >
-                        مشاهده
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </section>
-        </TabsContent>
-        <TabsContent value="out">
-          <div className="panel empty-state">
-            نامه‌های ارسال‌شده در همین کارتابل قابل پیگیری هستند.
-          </div>
-        </TabsContent>
-        <TabsContent value="archive">
-          <div className="panel empty-state">
-            هنوز نامه‌ای بایگانی نشده است.
-          </div>
-        </TabsContent>
-      </Tabs>
-      <Dialog
-        open={Boolean(selected)}
-        onOpenChange={(v) => !v && setSelected(null)}
-      >
-        <DialogContent className="letter-dialog" dir="rtl">
-          <DialogHeader>
-            <DialogTitle>{selected?.subject}</DialogTitle>
-            <DialogDescription>
-              از {selected?.from} برای {selected?.to} · {selected?.date}
-            </DialogDescription>
-          </DialogHeader>
-          <article className="letter-paper">
-            <div className="letter-brand">
-              <span>ک</span>
-              <strong>آژانس تبلیغاتی کلمه</strong>
-            </div>
-            <p>{selected?.body}</p>
-            <footer>
-              با احترام
-              <br />
-              {selected?.from}
-            </footer>
-          </article>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSelected(null)}>
-              بستن
-            </Button>
-            <Button>پاراف و تأیید</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
 function TeamPro({
   members,
   tasks,
@@ -4111,10 +3505,29 @@ function TeamPro({
   onLeave: (l: Leave) => void;
   onLeaveStatus: (id: number, s: Leave["status"]) => void;
 }) {
-  const [leaveOpen, setLeaveOpen] = useState(false),[reportMember,setReportMember]=useState<Member|null>(null),[attendanceMonth,setAttendanceMonth]=useState("");
+  const [leaveOpen, setLeaveOpen] = useState(false),
+    [reportMember, setReportMember] = useState<Member | null>(null),
+    [attendanceMonth, setAttendanceMonth] = useState("");
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   const member = (id: number) => members.find((m) => m.id === id);
-  const currentOpen = attendance.some((a) => a.memberId === currentMemberId && !a.checkOut);
-  const attendanceMonths=Array.from(new Set(attendance.map((entry)=>entry.date.slice(0,7)))).sort().reverse(),selectedAttendanceMonth=attendanceMonth||attendanceMonths[0]||"",monthlyAttendance=selectedAttendanceMonth?attendance.filter((entry)=>entry.date.startsWith(selectedAttendanceMonth)):attendance;
+  const currentOpen = attendance.some(
+    (a) => a.memberId === currentMemberId && !a.checkOut,
+  );
+  const attendanceMonths = Array.from(
+      new Set(attendance.map((entry) => entry.date.slice(0, 7))),
+    )
+      .sort()
+      .reverse(),
+    selectedAttendanceMonth = attendanceMonth || attendanceMonths[0] || "",
+    monthlyAttendance = selectedAttendanceMonth
+      ? attendance.filter((entry) =>
+          entry.date.startsWith(selectedAttendanceMonth),
+        )
+      : attendance;
   return (
     <>
       <PageTitle
@@ -4185,7 +3598,16 @@ function TeamPro({
                 </div>
                 <h3>{m.name}</h3>
                 <p>{m.email}</p>
-                <div className={`presence ${m.lastSeen&&Date.now()-m.lastSeen<120000?"online":"offline"}`}><i/>{m.lastSeen&&Date.now()-m.lastSeen<120000?"آنلاین":m.lastSeen?`آخرین فعالیت ${new Intl.DateTimeFormat("fa-IR",{hour:"2-digit",minute:"2-digit"}).format(new Date(m.lastSeen))}`:"هنوز وارد نشده"}</div>
+                <div
+                  className={`presence ${m.lastSeen && presenceNow - m.lastSeen < 120000 ? "online" : "offline"}`}
+                >
+                  <i />
+                  {m.lastSeen && presenceNow - m.lastSeen < 120000
+                    ? "آنلاین"
+                    : m.lastSeen
+                      ? `آخرین فعالیت ${new Intl.DateTimeFormat("fa-IR", { hour: "2-digit", minute: "2-digit" }).format(new Date(m.lastSeen))}`
+                      : "هنوز وارد نشده"}
+                </div>
                 <div className="member-meta">
                   <span>{m.role}</span>
                   <span>
@@ -4200,13 +3622,35 @@ function TeamPro({
                 <Button variant="outline" onClick={() => onAccess(m)}>
                   <LockKeyhole /> تنظیم دسترسی‌ها
                 </Button>
-                <Button variant="ghost" onClick={()=>setReportMember(m)}><BarChart3/> گزارش عملکرد ماهانه</Button>
+                <Button variant="ghost" onClick={() => setReportMember(m)}>
+                  <BarChart3 /> گزارش عملکرد ماهانه
+                </Button>
               </article>
             ))}
           </section>
         </TabsContent>
         <TabsContent value="attendance">
-          {attendanceMonths.length>0&&<div className="finance-month-bar"><div><CalendarDays/><span><small>ماه حضور و غیاب</small><strong>{monthTitle(selectedAttendanceMonth)}</strong></span></div><select value={selectedAttendanceMonth} onChange={(e)=>setAttendanceMonth(e.target.value)}>{attendanceMonths.map((value)=><option key={value} value={value}>{monthTitle(value)}</option>)}</select></div>}
+          {attendanceMonths.length > 0 && (
+            <div className="finance-month-bar">
+              <div>
+                <CalendarDays />
+                <span>
+                  <small>ماه حضور و غیاب</small>
+                  <strong>{monthTitle(selectedAttendanceMonth)}</strong>
+                </span>
+              </div>
+              <select
+                value={selectedAttendanceMonth}
+                onChange={(e) => setAttendanceMonth(e.target.value)}
+              >
+                {attendanceMonths.map((value) => (
+                  <option key={value} value={value}>
+                    {monthTitle(value)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <section className="panel table-panel">
             <Table>
               <TableHeader>
@@ -4297,7 +3741,11 @@ function TeamPro({
                   </Avatar>
                   <div>
                     <strong>{m.name}</strong>
-                    <small>{selectedAttendanceMonth ? monthTitle(selectedAttendanceMonth) : "بدون رکورد"}</small>
+                    <small>
+                      {selectedAttendanceMonth
+                        ? monthTitle(selectedAttendanceMonth)
+                        : "بدون رکورد"}
+                    </small>
                   </div>
                   <b>{rows.length} روز حضور</b>
                   <span>
@@ -4334,7 +3782,67 @@ function TeamPro({
           </section>
         </TabsContent>
       </Tabs>
-      <Dialog open={Boolean(reportMember)} onOpenChange={v=>!v&&setReportMember(null)}><DialogContent className="member-report-dialog"><DialogHeader><DialogTitle>گزارش عملکرد {reportMember?.name}</DialogTitle><DialogDescription>{monthTitle(currentJalaliMonth())} · گزارش اختصاصی مدیر کل</DialogDescription></DialogHeader>{reportMember&&<div className="member-report-kpis"><span><strong>{tasks.filter(t=>t.assignee===reportMember.name&&t.status==="done").length}</strong><small>تسک تکمیل‌شده</small></span><span><strong>{tasks.filter(t=>t.assignee===reportMember.name&&!['done','cancelled'].includes(t.status)).length}</strong><small>تسک باز</small></span><span><strong>{attendance.filter(a=>a.memberId===reportMember.id).length}</strong><small>روز حضور</small></span><span><strong>{leaves.filter(l=>l.memberId===reportMember.id&&l.status==="تأیید شده").length}</strong><small>مرخصی تأییدشده</small></span></div>}</DialogContent></Dialog>
+      <Dialog
+        open={Boolean(reportMember)}
+        onOpenChange={(v) => !v && setReportMember(null)}
+      >
+        <DialogContent className="member-report-dialog">
+          <DialogHeader>
+            <DialogTitle>گزارش عملکرد {reportMember?.name}</DialogTitle>
+            <DialogDescription>
+              {monthTitle(currentJalaliMonth())} · گزارش اختصاصی مدیر کل
+            </DialogDescription>
+          </DialogHeader>
+          {reportMember && (
+            <div className="member-report-kpis">
+              <span>
+                <strong>
+                  {
+                    tasks.filter(
+                      (t) =>
+                        t.assignee === reportMember.name && t.status === "done",
+                    ).length
+                  }
+                </strong>
+                <small>تسک تکمیل‌شده</small>
+              </span>
+              <span>
+                <strong>
+                  {
+                    tasks.filter(
+                      (t) =>
+                        t.assignee === reportMember.name &&
+                        !["done", "cancelled"].includes(t.status),
+                    ).length
+                  }
+                </strong>
+                <small>تسک باز</small>
+              </span>
+              <span>
+                <strong>
+                  {
+                    attendance.filter((a) => a.memberId === reportMember.id)
+                      .length
+                  }
+                </strong>
+                <small>روز حضور</small>
+              </span>
+              <span>
+                <strong>
+                  {
+                    leaves.filter(
+                      (l) =>
+                        l.memberId === reportMember.id &&
+                        l.status === "تأیید شده",
+                    ).length
+                  }
+                </strong>
+                <small>مرخصی تأییدشده</small>
+              </span>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       <Modal
         open={leaveOpen}
         close={() => setLeaveOpen(false)}
@@ -4345,7 +3853,7 @@ function TeamPro({
           e.preventDefault();
           const d = fd(e);
           onLeave({
-            id: Date.now(),
+            id: newId(),
             memberId: 1,
             from: d.from,
             to: d.to,
@@ -4425,8 +3933,19 @@ function ProjectDialogPro({
   setFree: (v: boolean) => void;
   save: (p: Project) => void;
 }) {
-  const [picked, setPicked] = useState<number[]>([1]),[logo,setLogo]=useState<Attachment|undefined>();
-  const uploadLogo=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری لوگو انجام نشد");return}setLogo(await response.json());toast.success("لوگوی پروژه آماده شد")};
+  const [picked, setPicked] = useState<number[]>([1]),
+    [logo, setLogo] = useState<Attachment | undefined>();
+  const uploadLogo = async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("api/files", { method: "POST", body });
+    if (!response.ok) {
+      toast.error("بارگذاری لوگو انجام نشد");
+      return;
+    }
+    setLogo(await response.json());
+    toast.success("لوگوی پروژه آماده شد");
+  };
   return (
     <Modal
       open={open}
@@ -4437,7 +3956,7 @@ function ProjectDialogPro({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           title: d.title,
           color: "#012BF9",
           client: free ? null : d.client,
@@ -4460,7 +3979,29 @@ function ProjectDialogPro({
         </span>
       </div>
       <div className="form-grid">
-        <label className="project-logo-upload wide"><span className="project-logo-preview">{logo?<img src={logo.url} alt="پیش‌نمایش لوگوی پروژه"/>:<FolderKanban/>}</span><span><strong>لوگوی پروژه</strong><small>PNG، JPG یا WEBP؛ پیشنهاد: تصویر مربعی</small></span><Button type="button" variant="outline">انتخاب لوگو</Button><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>e.target.files?.[0]&&uploadLogo(e.target.files[0])}/></label>
+        <label className="project-logo-upload wide">
+          <span className="project-logo-preview">
+            {logo ? (
+              <img src={logo.url} alt="پیش‌نمایش لوگوی پروژه" />
+            ) : (
+              <FolderKanban />
+            )}
+          </span>
+          <span>
+            <strong>لوگوی پروژه</strong>
+            <small>PNG، JPG یا WEBP؛ پیشنهاد: تصویر مربعی</small>
+          </span>
+          <Button type="button" variant="outline">
+            انتخاب لوگو
+          </Button>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) =>
+              e.target.files?.[0] && uploadLogo(e.target.files[0])
+            }
+          />
+        </label>
         <Field label="عنوان پروژه" name="title" required />
         <Field label="مشتری" name="client">
           <select name="client" disabled={free} required={!free}>
@@ -4494,224 +4035,56 @@ function ProjectDialogPro({
     </Modal>
   );
 }
-function ProjectSettingsPro({
-  open,
-  close,
-  project,
-  clients,
-  members,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  project: Project | null;
-  clients: Client[];
-  members: Member[];
-  save: (p: Project) => void;
-}) {
-  const [picked, setPicked] = useState<number[]>([]);
-  useEffect(() => setPicked(project?.memberIds || []), [project]);
-  if (!project) return null;
-  const labels = { ...defaultBoardLabels, ...project.boardLabels };
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="تنظیمات پروژه"
-      description="اعضا و نام ستون‌های کانبان را برای همین پروژه تنظیم کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          ...project,
-          title: d.title,
-          client: d.client || null,
-          service: d.service,
-          manager: d.manager,
-          memberIds: picked,
-          boardLabels: {
-            backlog: d.backlog,
-            doing: d.doing,
-            done: d.done,
-            cancelled: d.cancelled,
-          },
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field label="عنوان پروژه" name="title" defaultValue={project.title} />
-        <Field label="مشتری" name="client">
-          <select name="client" defaultValue={project.client || ""}>
-            <option value="">پروژه آزاد</option>
-            {clients.map((c) => (
-              <option key={c.id}>{c.company}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="خدمت" name="service" defaultValue={project.service} />
-        <Field label="مدیر پروژه" name="manager">
-          <select name="manager" defaultValue={project.manager}>
-            {members.map((m) => (
-              <option key={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <h3 className="form-section-title">عنوان ستون‌های کانبان</h3>
-      <div className="form-grid">
-        <Field label="ستون اول" name="backlog" defaultValue={labels.backlog} />
-        <Field label="ستون دوم" name="doing" defaultValue={labels.doing} />
-        <Field label="ستون سوم" name="done" defaultValue={labels.done} />
-        <Field
-          label="ستون چهارم"
-          name="cancelled"
-          defaultValue={labels.cancelled}
-        />
-      </div>
-      <h3 className="form-section-title">اعضای پروژه</h3>
-      <MemberPicker members={members} value={picked} onChange={setPicked} />
-    </Modal>
-  );
-}
-function ProjectPanelPro({
-  project,
-  tasks,
-  members,
-  close,
-  onSettings,
-  onAddTask,
-  onMove,
-}: {
-  project: Project | null;
-  tasks: Task[];
-  members: Member[];
-  close: () => void;
-  onSettings: () => void;
-  onAddTask: () => void;
-  onMove: (id: number, s: TaskStatus) => void;
-}) {
-  if (!project) return null;
-  const list = tasks.filter((t) => t.project === project.title),
-    labels = { ...defaultBoardLabels, ...project.boardLabels };
-  return (
-    <Dialog open={Boolean(project)} onOpenChange={(v) => !v && close()}>
-      <DialogContent className="project-dialog" showCloseButton={false}>
-        <div className="project-dialog-head">
-          <button className="icon-button" onClick={close}>
-            <X />
-          </button>
-          <div className="project-avatar" style={{ background: project.color }}>
-            {project.logo?<img src={project.logo.url} alt={`لوگوی ${project.title}`}/>:project.title[0]}
-          </div>
-          <div>
-            <h2>{project.title}</h2>
-            <span>
-              {project.client || "پروژه آزاد"} · {list.length} وظیفه
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            className="project-settings"
-            onClick={onSettings}
-          >
-            <Settings /> تنظیمات پروژه
-          </Button>
-          <Button onClick={onAddTask}>
-            <Plus /> افزودن وظیفه
-          </Button>
-        </div>
-        <Tabs defaultValue="board" className="project-tabs">
-          <TabsList variant="line">
-            <TabsTrigger value="board">کانبان پروژه</TabsTrigger>
-            <TabsTrigger value="members">اعضای پروژه</TabsTrigger>
-          </TabsList>
-          <TabsContent value="board">
-            <div className="kanban">
-              {columns.map((c) => (
-                <section className="kanban-column" key={c.id}>
-                  <header>
-                    <span>
-                      <i style={{ background: c.color }} />
-                      {labels[c.id]}
-                    </span>
-                    <b>{list.filter((t) => t.status === c.id).length}</b>
-                  </header>
-                  <div className="kanban-cards">
-                    {list
-                      .filter((t) => t.status === c.id)
-                      .map((t) => (
-                        <article
-                          className={`kanban-card project-task-card ${t.status === "done" ? "completed" : ""}`}
-                          key={t.id}
-                        >
-                          <button
-                            className={`task-checkbox ${t.status === "done" ? "checked" : ""}`}
-                            onClick={() =>
-                              onMove(
-                                t.id,
-                                t.status === "done" ? "backlog" : "done",
-                              )
-                            }
-                            aria-label={
-                              t.status === "done"
-                                ? "بازگرداندن وظیفه"
-                                : "تکمیل وظیفه"
-                            }
-                          >
-                            {t.status === "done" && <Check />}
-                          </button>
-                          <div>
-                            <h3>{t.title}</h3>
-                            <p>
-                              {t.assignee} · {t.due}
-                            </p>
-                          </div>
-                        </article>
-                      ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          </TabsContent>
-          <TabsContent value="members">
-            <div className="project-member-list">
-              {members
-                .filter((m) => (project.memberIds || []).includes(m.id))
-                .map((m) => (
-                  <div key={m.id}>
-                    <Avatar>
-                      <AvatarFallback>{initials(m.name)}</AvatarFallback>
-                    </Avatar>
-                    <span>
-                      <strong>{m.name}</strong>
-                      <small>{m.role}</small>
-                    </span>
-                  </div>
-                ))}
-            </div>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
-const downloadClientTemplate=async()=>{
-  const XLSX=await import("xlsx");
-  const sheet=XLSX.utils.json_to_sheet([{
-    "نام و نام خانوادگی":"علی رضایی","نام شرکت":"شرکت نمونه","شماره تماس":"09123456789",
-    "ایمیل":"info@example.com","آدرس سایت":"https://example.com","برچسب خدمت":"طراحی سایت",
-  }]);
-  sheet["!cols"]=[{wch:24},{wch:24},{wch:18},{wch:28},{wch:32},{wch:20}];
-  const workbook=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook,sheet,"مشتریان");
-  XLSX.writeFile(workbook,"نمونه-ورود-مشتریان.xlsx");
+const downloadClientTemplate = async () => {
+  const XLSX = await import("xlsx");
+  const sheet = XLSX.utils.json_to_sheet([
+    {
+      "نام و نام خانوادگی": "علی رضایی",
+      "نام شرکت": "شرکت نمونه",
+      "شماره تماس": "09123456789",
+      ایمیل: "info@example.com",
+      "آدرس سایت": "https://example.com",
+      "برچسب خدمت": "طراحی سایت",
+    },
+  ]);
+  sheet["!cols"] = [
+    { wch: 24 },
+    { wch: 24 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 32 },
+    { wch: 20 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "مشتریان");
+  XLSX.writeFile(workbook, "نمونه-ورود-مشتریان.xlsx");
 };
-const readClientExcel=async(file:File,labels:string[])=>{
-  const XLSX=await import("xlsx");
-  const workbook=XLSX.read(await file.arrayBuffer(),{type:"array"}),sheet=workbook.Sheets[workbook.SheetNames[0]],rows=XLSX.utils.sheet_to_json<Record<string,unknown>>(sheet,{defval:""});
-  const value=(row:Record<string,unknown>,...keys:string[])=>String(keys.map(key=>row[key]).find(item=>item!==undefined&&item!=="")||"").trim();
-  return rows.map((row,index):Client=>({id:Date.now()+index,name:value(row,"نام و نام خانوادگی","نام مشتری","name"),company:value(row,"نام شرکت","شرکت","company"),phone:value(row,"شماره تماس","تلفن","phone"),email:value(row,"ایمیل","email"),website:value(row,"آدرس سایت","وب‌سایت","website"),service:value(row,"برچسب خدمت","خدمت","service")||labels[0]||"عمومی"})).filter(client=>client.name&&client.company);
+const readClientExcel = async (file: File, labels: string[]) => {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" }),
+    sheet = workbook.Sheets[workbook.SheetNames[0]],
+    rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      defval: "",
+    });
+  const value = (row: Record<string, unknown>, ...keys: string[]) =>
+    String(
+      keys
+        .map((key) => row[key])
+        .find((item) => item !== undefined && item !== "") || "",
+    ).trim();
+  return rows
+    .map((row, index): Client => ({
+      id: newId() + index,
+      name: value(row, "نام و نام خانوادگی", "نام مشتری", "name"),
+      company: value(row, "نام شرکت", "شرکت", "company"),
+      phone: value(row, "شماره تماس", "تلفن", "phone"),
+      email: value(row, "ایمیل", "email"),
+      website: value(row, "آدرس سایت", "وب‌سایت", "website"),
+      service:
+        value(row, "برچسب خدمت", "خدمت", "service") || labels[0] || "عمومی",
+    }))
+    .filter((client) => client.name && client.company);
 };
 
 function ClientsV2({
@@ -4726,25 +4099,60 @@ function ClientsV2({
   labels,
 }: {
   clients: Client[];
-  projects:Project[];transactions:Transaction[];contracts:Contract[];
+  projects: Project[];
+  transactions: Transaction[];
+  contracts: Contract[];
   onAdd: () => void;
   onEdit: (id: number) => void;
   onDelete: (id: number) => void;
   onImport: (rows: Client[]) => void;
   labels: string[];
 }) {
-  const [search, setSearch] = useState(""),[selected,setSelected]=useState<Client|null>(null),[importing,setImporting]=useState(false);
+  const [search, setSearch] = useState(""),
+    [selected, setSelected] = useState<Client | null>(null),
+    [importing, setImporting] = useState(false);
   const visible = clients.filter((c) =>
-    `${c.name} ${c.company} ${c.service} ${c.phone} ${c.email} ${c.website||""}`.toLowerCase().includes(search.toLowerCase()),
+    `${c.name} ${c.company} ${c.service} ${c.phone} ${c.email} ${c.website || ""}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
   );
   const services = new Set(clients.map((c) => c.service)).size;
   return (
     <>
       <PageTitle title="مشتریان" subtitle="پرونده مشتریان و خدمات فعال">
-        <Button variant="outline" onClick={downloadClientTemplate}><Download /> دانلود اکسل نمونه</Button>
+        <Button variant="outline" onClick={downloadClientTemplate}>
+          <Download /> دانلود اکسل نمونه
+        </Button>
         <label className="client-import-button">
-          <FilePlus2 /> {importing?"در حال خواندن...":"ورود از اکسل"}
-          <input type="file" accept=".xlsx,.xls,.csv" disabled={importing} onChange={async(event)=>{const file=event.target.files?.[0];if(!file)return;setImporting(true);try{const rows=await readClientExcel(file,labels);if(!rows.length)throw new Error("ردیف معتبری در فایل پیدا نشد.");onImport(rows);toast.success(`${faDigits(String(rows.length))} مشتری از اکسل اضافه شد`)}catch(reason){toast.error(reason instanceof Error?reason.message:"خواندن فایل اکسل انجام نشد.")}finally{setImporting(false);event.target.value=""}}}/>
+          <FilePlus2 /> {importing ? "در حال خواندن..." : "ورود از اکسل"}
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            disabled={importing}
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              setImporting(true);
+              try {
+                const rows = await readClientExcel(file, labels);
+                if (!rows.length)
+                  throw new Error("ردیف معتبری در فایل پیدا نشد.");
+                onImport(rows);
+                toast.success(
+                  `${faDigits(String(rows.length))} مشتری از اکسل اضافه شد`,
+                );
+              } catch (reason) {
+                toast.error(
+                  reason instanceof Error
+                    ? reason.message
+                    : "خواندن فایل اکسل انجام نشد.",
+                );
+              } finally {
+                setImporting(false);
+                event.target.value = "";
+              }
+            }}
+          />
         </label>
         <Button onClick={onAdd}>
           <UserPlus /> افزودن مشتری
@@ -4804,7 +4212,11 @@ function ClientsV2({
         </div>
         <div className="client-rows">
           {visible.map((c, i) => (
-            <article className="client-modern-row" key={c.id} onDoubleClick={()=>setSelected(c)}>
+            <article
+              className="client-modern-row"
+              key={c.id}
+              onDoubleClick={() => setSelected(c)}
+            >
               <div className="client-identity">
                 <Avatar className="client-avatar">
                   <AvatarFallback>{initials(c.name)}</AvatarFallback>
@@ -4851,9 +4263,14 @@ function ClientsV2({
                   <DropdownMenuItem>
                     <FolderKanban /> مشاهده پروژه‌ها
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={()=>setSelected(c)}><UserRoundCheck/> پروفایل کامل مشتری</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSelected(c)}>
+                    <UserRoundCheck /> پروفایل کامل مشتری
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="danger-item" onClick={() => onDelete(c.id)}>
+                  <DropdownMenuItem
+                    className="danger-item"
+                    onClick={() => onDelete(c.id)}
+                  >
                     <Trash2 /> حذف مشتری
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -4865,7 +4282,97 @@ function ClientsV2({
           <div className="empty-state">مشتری‌ای با این عبارت پیدا نشد.</div>
         )}
       </section>
-      <Dialog open={Boolean(selected)} onOpenChange={v=>!v&&setSelected(null)}><DialogContent className="client-profile-dialog"><DialogHeader><DialogTitle>پروفایل مشتری</DialogTitle><DialogDescription>نمای کامل همکاری، قراردادها و وضعیت مالی</DialogDescription></DialogHeader>{selected&&<><header className="client-profile-head"><Avatar><AvatarFallback>{initials(selected.name)}</AvatarFallback></Avatar><div><h2>{selected.name}</h2><span>{selected.company} · {selected.service}</span></div><a href={`tel:${selected.phone.replace(/\s/g,"")}`}>{selected.phone}</a></header><div className="client-profile-kpis"><span><strong>{projects.filter(p=>p.client===selected.company).length}</strong><small>پروژه</small></span><span><strong>{contracts.filter(c=>c.client===selected.company).length}</strong><small>قرارداد</small></span><span><strong>{money(transactions.filter(t=>projects.some(p=>p.client===selected.company&&p.title===t.project)&&t.type==="income"&&t.status==="paid").reduce((s,t)=>s+t.amount,0))}</strong><small>دریافتی</small></span></div><section className="client-profile-projects"><h3>پروژه‌های مشتری</h3>{projects.filter(p=>p.client===selected.company).map(p=><div key={p.id}><span className="project-avatar" style={{background:p.color}}>{p.logo?<img src={p.logo.url} alt=""/>:p.title[0]}</span><span><strong>{p.title}</strong><small>{p.service} · مدیر {p.manager}</small></span></div>)}</section></>}</DialogContent></Dialog>
+      <Dialog
+        open={Boolean(selected)}
+        onOpenChange={(v) => !v && setSelected(null)}
+      >
+        <DialogContent className="client-profile-dialog">
+          <DialogHeader>
+            <DialogTitle>پروفایل مشتری</DialogTitle>
+            <DialogDescription>
+              نمای کامل همکاری، قراردادها و وضعیت مالی
+            </DialogDescription>
+          </DialogHeader>
+          {selected && (
+            <>
+              <header className="client-profile-head">
+                <Avatar>
+                  <AvatarFallback>{initials(selected.name)}</AvatarFallback>
+                </Avatar>
+                <div>
+                  <h2>{selected.name}</h2>
+                  <span>
+                    {selected.company} · {selected.service}
+                  </span>
+                </div>
+                <a href={`tel:${selected.phone.replace(/\s/g, "")}`}>
+                  {selected.phone}
+                </a>
+              </header>
+              <div className="client-profile-kpis">
+                <span>
+                  <strong>
+                    {
+                      projects.filter((p) => p.client === selected.company)
+                        .length
+                    }
+                  </strong>
+                  <small>پروژه</small>
+                </span>
+                <span>
+                  <strong>
+                    {
+                      contracts.filter((c) => c.client === selected.company)
+                        .length
+                    }
+                  </strong>
+                  <small>قرارداد</small>
+                </span>
+                <span>
+                  <strong>
+                    {money(
+                      transactions
+                        .filter(
+                          (t) =>
+                            projects.some(
+                              (p) =>
+                                p.client === selected.company &&
+                                p.title === t.project,
+                            ) &&
+                            t.type === "income" &&
+                            t.status === "paid",
+                        )
+                        .reduce((s, t) => s + t.amount, 0),
+                    )}
+                  </strong>
+                  <small>دریافتی</small>
+                </span>
+              </div>
+              <section className="client-profile-projects">
+                <h3>پروژه‌های مشتری</h3>
+                {projects
+                  .filter((p) => p.client === selected.company)
+                  .map((p) => (
+                    <div key={p.id}>
+                      <span
+                        className="project-avatar"
+                        style={{ background: p.color }}
+                      >
+                        {p.logo ? <img src={p.logo.url} alt="" /> : p.title[0]}
+                      </span>
+                      <span>
+                        <strong>{p.title}</strong>
+                        <small>
+                          {p.service} · مدیر {p.manager}
+                        </small>
+                      </span>
+                    </div>
+                  ))}
+              </section>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -5051,12 +4558,12 @@ function DirectMessageDialog({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           name: d.member,
           group: false,
           members: ["مدیر نمونه", d.member],
           messages: d.message
-            ? [{ id: Date.now(), mine: true, text: d.message, time: now() }]
+            ? [{ id: newId(), mine: true, text: d.message, time: now() }]
             : [],
         });
       }}
@@ -5197,510 +4704,6 @@ function LettersV2({
   );
 }
 
-function ProjectSettingsV2({
-  open,
-  close,
-  project,
-  clients,
-  members,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  project: Project | null;
-  clients: Client[];
-  members: Member[];
-  save: (p: Project) => void;
-}) {
-  const [picked, setPicked] = useState<number[]>([]),
-    [tabs, setTabs] = useState<ProjectTab[]>(defaultProjectTabs),
-    [newTab, setNewTab] = useState("");
-  useEffect(() => {
-    setPicked(project?.memberIds || []);
-    setTabs(project?.tabs?.length ? project.tabs : defaultProjectTabs);
-  }, [project]);
-  if (!project) return null;
-  const labels = { ...defaultBoardLabels, ...project.boardLabels };
-  const renameTab = (id: string, title: string) =>
-    setTabs((v) => v.map((t) => (t.id === id ? { ...t, title } : t)));
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title="تنظیمات پروژه"
-      description="تب‌ها، ستون‌های کار و اعضای این پروژه را شخصی‌سازی کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e);
-        save({
-          ...project,
-          title: d.title,
-          client: d.client || null,
-          service: d.service,
-          manager: d.manager,
-          memberIds: picked,
-          tabs,
-          boardLabels: {
-            backlog: d.backlog,
-            doing: d.doing,
-            done: d.done,
-            cancelled: d.cancelled,
-          },
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field label="عنوان پروژه" name="title" defaultValue={project.title} />
-        <Field label="مشتری" name="client">
-          <select name="client" defaultValue={project.client || ""}>
-            <option value="">پروژه آزاد</option>
-            {clients.map((c) => (
-              <option key={c.id}>{c.company}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="خدمت" name="service" defaultValue={project.service} />
-        <Field label="مدیر پروژه" name="manager">
-          <select name="manager" defaultValue={project.manager}>
-            {members.map((m) => (
-              <option key={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <section className="project-settings-section">
-        <div className="section-title-row">
-          <div>
-            <h3>تب‌های بالای پروژه</h3>
-            <p>نام تب‌های اصلی را تغییر دهید یا تب تازه بسازید.</p>
-          </div>
-        </div>
-        <div className="tab-editor-list">
-          {tabs.map((tab) => (
-            <div className="tab-editor-row" key={tab.id}>
-              <span>
-                {tab.kind === "custom" ? <Plus /> : <LayoutDashboard />}
-              </span>
-              <Input
-                value={tab.title}
-                onChange={(e) => renameTab(tab.id, e.target.value)}
-                aria-label="عنوان تب"
-              />
-              {tab.kind === "custom" && (
-                <button
-                  type="button"
-                  className="remove-tab"
-                  onClick={() =>
-                    setTabs((v) => v.filter((t) => t.id !== tab.id))
-                  }
-                >
-                  <Trash2 />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="add-tab-row">
-          <Input
-            value={newTab}
-            onChange={(e) => setNewTab(e.target.value)}
-            placeholder="مثلاً فایل‌ها، یادداشت‌ها یا گزارش هفتگی"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              const title = newTab.trim();
-              if (!title) return;
-              setTabs((v) => [
-                ...v,
-                { id: `custom-${Date.now()}`, title, kind: "custom" },
-              ]);
-              setNewTab("");
-            }}
-          >
-            <Plus /> افزودن تب
-          </Button>
-        </div>
-      </section>
-      <section className="project-settings-section">
-        <h3>عنوان وضعیت‌های وظایف</h3>
-        <div className="form-grid">
-          <Field
-            label="ستون اول کانبان"
-            name="backlog"
-            defaultValue={labels.backlog}
-          />
-          <Field
-            label="ستون دوم کانبان"
-            name="doing"
-            defaultValue={labels.doing}
-          />
-          <Field
-            label="عنوان تکمیل‌شده‌ها"
-            name="done"
-            defaultValue={labels.done}
-          />
-          <Field
-            label="عنوان لغوشده‌ها"
-            name="cancelled"
-            defaultValue={labels.cancelled}
-          />
-        </div>
-      </section>
-      <section className="project-settings-section">
-        <h3>اعضای پروژه</h3>
-        <MemberPicker members={members} value={picked} onChange={setPicked} />
-      </section>
-    </Modal>
-  );
-}
-
-function ProjectPanelV2({
-  project,
-  tasks,
-  members,
-  close,
-  onSettings,
-  onAddTask,
-  onMove,
-}: {
-  project: Project | null;
-  tasks: Task[];
-  members: Member[];
-  close: () => void;
-  onSettings: () => void;
-  onAddTask: () => void;
-  onMove: (id: number, s: TaskStatus) => void;
-}) {
-  const [draggedTask, setDraggedTask] = useState<number | null>(null);
-  if (!project) return null;
-  const list = tasks.filter((t) => t.project === project.title),
-    labels = { ...defaultBoardLabels, ...project.boardLabels },
-    tabs = project.tabs?.length ? project.tabs : defaultProjectTabs;
-  const activeColumns = columns.filter(
-    (c) => c.id === "backlog" || c.id === "doing",
-  );
-  const archived = (status: TaskStatus) =>
-    list.filter((t) => t.status === status);
-  return (
-    <Dialog open={Boolean(project)} onOpenChange={(v) => !v && close()}>
-      <DialogContent
-        className="project-dialog project-dialog-v2"
-        showCloseButton={false}
-      >
-        <div className="project-dialog-head">
-          <button className="icon-button" onClick={close}>
-            <X />
-          </button>
-          <div className="project-avatar" style={{ background: project.color }}>
-            {project.logo?<img src={project.logo.url} alt={`لوگوی ${project.title}`}/>:project.title[0]}
-          </div>
-          <div>
-            <h2>{project.title}</h2>
-            <span>
-              {project.client || "پروژه آزاد"} ·{" "}
-              {
-                list.filter(
-                  (t) => t.status !== "done" && t.status !== "cancelled",
-                ).length
-              }{" "}
-              کار باز
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            className="project-settings"
-            onClick={onSettings}
-          >
-            <Settings /> تنظیمات پروژه
-          </Button>
-          <Button onClick={onAddTask}>
-            <Plus /> افزودن وظیفه
-          </Button>
-        </div>
-        <Tabs defaultValue={tabs[0]?.id || "board"} className="project-tabs">
-          <TabsList variant="line" className="project-top-tabs">
-            {tabs.map((tab) => (
-              <TabsTrigger key={tab.id} value={tab.id}>
-                {tab.title}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          {tabs.map((tab) => (
-            <TabsContent key={tab.id} value={tab.id}>
-              {tab.kind === "board" && (
-                <div className="kanban project-active-board">
-                  {activeColumns.map((c) => (
-                    <section
-                      className="kanban-column"
-                      key={c.id}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => {
-                        if (draggedTask) onMove(draggedTask, c.id);
-                        setDraggedTask(null);
-                      }}
-                    >
-                      <header>
-                        <span>
-                          <i style={{ background: c.color }} />
-                          {labels[c.id]}
-                        </span>
-                        <b>{list.filter((t) => t.status === c.id).length}</b>
-                      </header>
-                      <div className="kanban-cards">
-                        {list
-                          .filter((t) => t.status === c.id)
-                          .map((t) => (
-                            <article
-                              draggable
-                              onDragStart={() => setDraggedTask(t.id)}
-                              className="kanban-card project-task-card"
-                              key={t.id}
-                            >
-                              <button
-                                className="task-checkbox"
-                                onClick={() => onMove(t.id, "done")}
-                                aria-label="تکمیل وظیفه"
-                              />
-                              <div>
-                                <h3>{t.title}</h3>
-                                <p>
-                                  {t.assignee} · {t.due}
-                                </p>
-                              </div>
-                              <GripVertical className="task-grip" />
-                            </article>
-                          ))}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-              )}
-              {tab.kind === "summary" && (
-                <div className="project-status-summary">
-                  <div className="summary-strip">
-                    <article>
-                      <strong>{list.length}</strong>
-                      <span>کل وظایف</span>
-                    </article>
-                    <article>
-                      <strong>{archived("done").length}</strong>
-                      <span>{labels.done}</span>
-                    </article>
-                    <article>
-                      <strong>{archived("cancelled").length}</strong>
-                      <span>{labels.cancelled}</span>
-                    </article>
-                    <article>
-                      <strong>
-                        {list.filter((t) => t.status === "doing").length}
-                      </strong>
-                      <span>{labels.doing}</span>
-                    </article>
-                  </div>
-                  <div className="archive-columns">
-                    {(["done", "cancelled"] as TaskStatus[]).map((status) => (
-                      <section
-                        key={status}
-                        className={`archive-column archive-${status}`}
-                      >
-                        <header>
-                          <div>
-                            <i />
-                            <strong>{labels[status]}</strong>
-                          </div>
-                          <Badge variant="outline">
-                            {archived(status).length}
-                          </Badge>
-                        </header>
-                        {archived(status).map((t) => (
-                          <article key={t.id}>
-                            <button
-                              className={`task-checkbox ${status === "done" ? "checked" : "cancelled"}`}
-                              onClick={() => onMove(t.id, "backlog")}
-                              aria-label="بازگرداندن به کانبان"
-                            >
-                              {status === "done" ? <Check /> : <X />}
-                            </button>
-                            <span>
-                              <strong>{t.title}</strong>
-                              <small>
-                                {t.assignee} · {t.due}
-                              </small>
-                            </span>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => onMove(t.id, "backlog")}
-                            >
-                              بازگردانی
-                            </Button>
-                          </article>
-                        ))}
-                      </section>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {tab.kind === "members" && (
-                <div className="project-member-list">
-                  {members
-                    .filter((m) => (project.memberIds || []).includes(m.id))
-                    .map((m) => (
-                      <div key={m.id}>
-                        <Avatar>
-                          <AvatarFallback>{initials(m.name)}</AvatarFallback>
-                        </Avatar>
-                        <span>
-                          <strong>{m.name}</strong>
-                          <small>{m.role}</small>
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              )}
-              {tab.kind === "custom" && (
-                <section className="custom-project-tab">
-                  <div className="custom-tab-icon">
-                    <FolderKanban />
-                  </div>
-                  <h3>{tab.title}</h3>
-                  <p>
-                    نمای سفارشی این پروژه برای دسترسی سریع به وظایف و اطلاعات
-                    مرتبط.
-                  </p>
-                  <div className="custom-task-list">
-                    {list.slice(0, 5).map((t) => (
-                      <div key={t.id}>
-                        <span className={`custom-status status-${t.status}`} />
-                        <strong>{t.title}</strong>
-                        <small>{t.assignee}</small>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </TabsContent>
-          ))}
-        </Tabs>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function TasksV2({
-  tasks,
-  onAdd,
-  onMove,
-  onEdit,
-  onDelete,
-  dragged,
-  setDragged,
-}: {
-  tasks: Task[];
-  onAdd: () => void;
-  onMove: (id: number, s: TaskStatus) => void;
-  onEdit: (id: number) => void;
-  onDelete: (id: number) => void;
-  dragged: number | null;
-  setDragged: (id: number | null) => void;
-}) {
-  const standard = columns;
-  const inColumn = (task: Task, id: TaskStatus) =>
-    task.status === id ||
-    (id === "doing" && ["stage3", "stage4", "stage5"].includes(task.status));
-  return (
-    <>
-      <PageTitle title="وظایف" subtitle="وظایف محول‌شده به اعضای تیم">
-        <Button onClick={onAdd}>
-          <Plus size={17} /> افزودن وظیفه
-        </Button>
-      </PageTitle>
-      <div className="kanban board-page">
-        {standard.map((col) => (
-          <section
-            className="kanban-column"
-            key={col.id}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => {
-              if (dragged) onMove(dragged, col.id);
-              setDragged(null);
-            }}
-          >
-            <header>
-              <span>
-                <i style={{ background: col.color }} />
-                {col.title}
-              </span>
-              <b>{tasks.filter((t) => inColumn(t, col.id)).length}</b>
-            </header>
-            <div className="kanban-cards">
-              {tasks
-                .filter((t) => inColumn(t, col.id))
-                .map((t) => (
-                  <article
-                    className="kanban-card"
-                    key={t.id}
-                    draggable
-                    onDragStart={() => setDragged(t.id)}
-                  >
-                    <div className="card-grip">
-                      <GripVertical size={16} />
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="icon-button">
-                            <MoreVertical size={16} />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => onEdit(t.id)}>
-                            <Edit3 /> ویرایش وظیفه
-                          </DropdownMenuItem>
-                          {t.status !== "done" && (
-                            <DropdownMenuItem
-                              onClick={() => onMove(t.id, "done")}
-                            >
-                              <CheckCircle2 /> انتقال به انجام‌شده
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="danger-item"
-                            onClick={() => onDelete(t.id)}
-                          >
-                            <Trash2 /> حذف وظیفه
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                    <h3>{t.title}</h3>
-                    <p>{t.description}</p>
-                    <Badge variant="outline">{t.project}</Badge>
-                    <footer>
-                      <span className="task-meta">
-                        <Avatar className="avatar">
-                          <AvatarFallback>
-                            {initials(t.assignee)}
-                          </AvatarFallback>
-                        </Avatar>
-                        {t.assignee}
-                      </span>
-                      <span>{t.due}</span>
-                    </footer>
-                  </article>
-                ))}
-            </div>
-            <button className="add-card" onClick={onAdd}>
-              <Plus size={16} /> افزودن وظیفه
-            </button>
-          </section>
-        ))}
-      </div>
-    </>
-  );
-}
-
 function ProjectSettingsV3({
   open,
   close,
@@ -5722,8 +4725,10 @@ function ProjectSettingsV3({
     [workflow, setWorkflow] = useState<WorkflowColumn[]>(
       defaultWorkflowColumns,
     ),
-    [newTab, setNewTab] = useState(""),[logo,setLogo]=useState<Attachment|undefined>();
+    [newTab, setNewTab] = useState(""),
+    [logo, setLogo] = useState<Attachment | undefined>();
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh the editable dialog draft when its record changes
     setPicked(project?.memberIds || []);
     setTabs(project?.tabs?.length ? project.tabs : defaultProjectTabs);
     setWorkflow(
@@ -5755,7 +4760,17 @@ function ProjectSettingsV3({
         },
       ]);
   };
-  const uploadLogo=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری لوگو انجام نشد");return}setLogo(await response.json());toast.success("لوگوی پروژه تغییر کرد")};
+  const uploadLogo = async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("api/files", { method: "POST", body });
+    if (!response.ok) {
+      toast.error("بارگذاری لوگو انجام نشد");
+      return;
+    }
+    setLogo(await response.json());
+    toast.success("لوگوی پروژه تغییر کرد");
+  };
   return (
     <Modal
       open={open}
@@ -5784,7 +4799,25 @@ function ProjectSettingsV3({
       }}
     >
       <div className="form-grid">
-        <label className="project-logo-upload wide"><span className="project-logo-preview">{logo?<img src={logo.url} alt="لوگوی پروژه"/>:<FolderKanban/>}</span><span><strong>لوگوی پروژه</strong><small>برای جایگزینی لوگو، تصویر جدید انتخاب کنید.</small></span><Button type="button" variant="outline">تغییر لوگو</Button><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>e.target.files?.[0]&&uploadLogo(e.target.files[0])}/></label>
+        <label className="project-logo-upload wide">
+          <span className="project-logo-preview">
+            {logo ? <img src={logo.url} alt="لوگوی پروژه" /> : <FolderKanban />}
+          </span>
+          <span>
+            <strong>لوگوی پروژه</strong>
+            <small>برای جایگزینی لوگو، تصویر جدید انتخاب کنید.</small>
+          </span>
+          <Button type="button" variant="outline">
+            تغییر لوگو
+          </Button>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) =>
+              e.target.files?.[0] && uploadLogo(e.target.files[0])
+            }
+          />
+        </label>
         <Field label="عنوان پروژه" name="title" defaultValue={project.title} />
         <Field label="مشتری" name="client">
           <select name="client" defaultValue={project.client || ""}>
@@ -5959,11 +4992,12 @@ function ProjectPanelV3({
   onDeleteProject: () => void;
   onAddTask: () => void;
   onMove: (id: number, s: TaskStatus) => void;
-  onToggleSubtask:(taskId:number,subtaskId:number)=>void;
-  onUpdateTask:(task:Task)=>void;
-  onUpdateProject:(project:Project)=>void;
+  onToggleSubtask: (taskId: number, subtaskId: number) => void;
+  onUpdateTask: (task: Task) => void;
+  onUpdateProject: (project: Project) => void;
 }) {
-  const [draggedTask, setDraggedTask] = useState<number | null>(null),[detailTask,setDetailTask]=useState<number|null>(null),
+  const [draggedTask, setDraggedTask] = useState<number | null>(null),
+    [detailTask, setDetailTask] = useState<number | null>(null),
     [archiveMonth, setArchiveMonth] = useState(currentJalaliMonth());
   if (!project) return null;
   const list = tasks.filter((t) => t.project === project.title),
@@ -5976,7 +5010,9 @@ function ProjectPanelV3({
     allArchived = list.filter((t) => ["done", "cancelled"].includes(t.status)),
     archiveKey = (t: Task) => {
       const value = t.archivedAt || t.endDate || t.due;
-      return /^.{4}\/.{2}/.test(value) ? value.slice(0, 7) : currentJalaliMonth();
+      return /^.{4}\/.{2}/.test(value)
+        ? value.slice(0, 7)
+        : currentJalaliMonth();
     },
     archiveMonths = Array.from(new Set(allArchived.map(archiveKey)))
       .sort()
@@ -5993,7 +5029,21 @@ function ProjectPanelV3({
     allArchived.filter(
       (t) => t.status === status && archiveKey(t) === archiveMonth,
     );
-  const uploadProjectFile=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("بارگذاری فایل انجام نشد");return}const attachment=await response.json() as Attachment;onUpdateProject({...project,files:[attachment,...(project.files||[])]});toast.success("فایل به پروژه اضافه شد")};
+  const uploadProjectFile = async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("api/files", { method: "POST", body });
+    if (!response.ok) {
+      toast.error("بارگذاری فایل انجام نشد");
+      return;
+    }
+    const attachment = (await response.json()) as Attachment;
+    onUpdateProject({
+      ...project,
+      files: [attachment, ...(project.files || [])],
+    });
+    toast.success("فایل به پروژه اضافه شد");
+  };
   return (
     <Dialog open={Boolean(project)} onOpenChange={(v) => !v && close()}>
       <DialogContent
@@ -6005,7 +5055,11 @@ function ProjectPanelV3({
             <X />
           </button>
           <div className="project-avatar" style={{ background: project.color }}>
-            {project.logo?<img src={project.logo.url} alt={`لوگوی ${project.title}`}/>:project.title[0]}
+            {project.logo ? (
+              <img src={project.logo.url} alt={`لوگوی ${project.title}`} />
+            ) : (
+              project.title[0]
+            )}
           </div>
           <div>
             <h2>{project.title}</h2>
@@ -6044,7 +5098,9 @@ function ProjectPanelV3({
                 {tab.title}
               </TabsTrigger>
             ))}
-            <TabsTrigger value="project-files"><HardDrive/> فایل‌های پروژه</TabsTrigger>
+            <TabsTrigger value="project-files">
+              <HardDrive /> فایل‌های پروژه
+            </TabsTrigger>
           </TabsList>
           {tabs.map((tab) => (
             <TabsContent key={tab.id} value={tab.id}>
@@ -6083,11 +5139,39 @@ function ProjectPanelV3({
                               aria-label="تکمیل وظیفه"
                             />
                             <div>
-                              <button className="task-detail-link" onClick={()=>setDetailTask(t.id)}><h3>{t.title}</h3></button>
+                              <button
+                                className="task-detail-link"
+                                onClick={() => setDetailTask(t.id)}
+                              >
+                                <h3>{t.title}</h3>
+                              </button>
                               <p>
                                 {t.assignee} · {t.due}
                               </p>
-                              {t.subtasks?.length ? <div className="project-subtasks" onPointerDown={e=>e.stopPropagation()} onDragStart={e=>e.stopPropagation()}>{t.subtasks.map(s=><button type="button" draggable={false} key={s.id} className={s.done?"done":""} onClick={e=>{e.preventDefault();e.stopPropagation();onToggleSubtask(t.id,s.id)}}><span>{s.done&&<Check/>}</span><em>{s.title}</em></button>)}</div>:null}
+                              {t.subtasks?.length ? (
+                                <div
+                                  className="project-subtasks"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onDragStart={(e) => e.stopPropagation()}
+                                >
+                                  {t.subtasks.map((s) => (
+                                    <button
+                                      type="button"
+                                      draggable={false}
+                                      key={s.id}
+                                      className={s.done ? "done" : ""}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        onToggleSubtask(t.id, s.id);
+                                      }}
+                                    >
+                                      <span>{s.done && <Check />}</span>
+                                      <em>{s.title}</em>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -6143,7 +5227,11 @@ function ProjectPanelV3({
                     </article>
                   </div>
                   <ArchiveMonthPicker
-                    months={archiveMonths.length ? archiveMonths : [currentJalaliMonth()]}
+                    months={
+                      archiveMonths.length
+                        ? archiveMonths
+                        : [currentJalaliMonth()]
+                    }
                     value={archiveMonth}
                     onChange={setArchiveMonth}
                   />
@@ -6170,7 +5258,10 @@ function ProjectPanelV3({
                             >
                               {status === "done" ? <Check /> : <X />}
                             </button>
-                            <span onClick={()=>setDetailTask(t.id)} className="archive-task-copy">
+                            <span
+                              onClick={() => setDetailTask(t.id)}
+                              className="archive-task-copy"
+                            >
                               <strong>{t.title}</strong>
                               <small>
                                 {t.assignee} · {t.due}
@@ -6227,19 +5318,212 @@ function ProjectPanelV3({
               )}
             </TabsContent>
           ))}
-          <TabsContent value="project-files"><section className="project-file-center"><header><div><h3>مرکز فایل پروژه</h3><p>گزارش‌ها، تصاویر، قراردادها و فایل‌های تحویلی این پروژه</p></div><label><Plus/> افزودن فایل<input type="file" onChange={e=>e.target.files?.[0]&&uploadProjectFile(e.target.files[0])}/></label></header><div className="project-files-grid">{(project.files||[]).map((file,index)=><a key={`${file.name}-${index}`} href={file.url} target="_blank" rel="noreferrer"><span>{file.type.startsWith("image/")?<img src={file.url} alt=""/>:<FileText/>}</span><strong>{file.name}</strong><small>{file.type.startsWith("image/")?"تصویر":"فایل پروژه"}</small><Download/></a>)}{!project.files?.length&&<div className="file-empty"><HardDrive/><strong>هنوز فایلی ثبت نشده</strong><span>اولین فایل پروژه را بارگذاری کنید.</span></div>}</div></section></TabsContent>
+          <TabsContent value="project-files">
+            <section className="project-file-center">
+              <header>
+                <div>
+                  <h3>مرکز فایل پروژه</h3>
+                  <p>گزارش‌ها، تصاویر، قراردادها و فایل‌های تحویلی این پروژه</p>
+                </div>
+                <label>
+                  <Plus /> افزودن فایل
+                  <input
+                    type="file"
+                    onChange={(e) =>
+                      e.target.files?.[0] &&
+                      uploadProjectFile(e.target.files[0])
+                    }
+                  />
+                </label>
+              </header>
+              <div className="project-files-grid">
+                {(project.files || []).map((file, index) => (
+                  <a
+                    key={`${file.name}-${index}`}
+                    href={file.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <span>
+                      {file.type.startsWith("image/") ? (
+                        <img src={file.url} alt="" />
+                      ) : (
+                        <FileText />
+                      )}
+                    </span>
+                    <strong>{file.name}</strong>
+                    <small>
+                      {file.type.startsWith("image/") ? "تصویر" : "فایل پروژه"}
+                    </small>
+                    <Download />
+                  </a>
+                ))}
+                {!project.files?.length && (
+                  <div className="file-empty">
+                    <HardDrive />
+                    <strong>هنوز فایلی ثبت نشده</strong>
+                    <span>اولین فایل پروژه را بارگذاری کنید.</span>
+                  </div>
+                )}
+              </div>
+            </section>
+          </TabsContent>
         </Tabs>
-        <TaskDetailsModal task={tasks.find(t=>t.id===detailTask)} open={detailTask!==null} close={()=>setDetailTask(null)} save={onUpdateTask}/>
+        <TaskDetailsModal
+          task={tasks.find((t) => t.id === detailTask)}
+          open={detailTask !== null}
+          close={() => setDetailTask(null)}
+          save={onUpdateTask}
+        />
       </DialogContent>
     </Dialog>
   );
 }
 
-function TaskDetailsModal({task,open,close,save}:{task?:Task;open:boolean;close:()=>void;save:(task:Task)=>void}){
- const [comment,setComment]=useState(""); if(!task)return null;
- const upload=async(file:File)=>{const body=new FormData();body.append("file",file);const response=await fetch("api/files",{method:"POST",body});if(!response.ok){toast.error("فایل ارسال نشد");return}const attachment=await response.json() as Attachment;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"کاربر جاری",text:"فایل پیوست شد",time:`امروز، ${now()}`,attachment}]})};
- const submit=()=>{if(!comment.trim())return;save({...task,comments:[...(task.comments||[]),{id:Date.now(),author:"کاربر جاری",text:comment.trim(),time:`امروز، ${now()}`}]});setComment("")};
- return <Dialog open={open} onOpenChange={v=>!v&&close()}><DialogContent className="task-detail-dialog"><DialogHeader><DialogTitle>{task.title}</DialogTitle><DialogDescription>{task.project} · {task.assignee}</DialogDescription></DialogHeader><div className="task-detail-summary"><span><small>وضعیت</small><strong>{defaultBoardLabels[task.status]}</strong></span><span><small>شروع</small><strong>{task.startDate||"—"}</strong></span><span><small>مهلت پایان</small><strong>{task.endDate||task.due||"—"}</strong></span><span><small>برچسب</small><strong>{task.label}</strong></span></div><section className="task-description-box"><h3>توضیحات وظیفه</h3><p>{task.description||"برای این وظیفه توضیحی ثبت نشده است."}</p></section>{task.subtasks?.length?<section className="detail-subtasks"><h3>مراحل انجام</h3>{task.subtasks.map(s=><div className={s.done?"done":""} key={s.id}><span>{s.done&&<Check/>}</span>{s.title}</div>)}</section>:null}<section className="task-comments"><h3>دیدگاه‌ها و فعالیت‌ها</h3><div>{(task.comments||[]).map(c=><article key={c.id}><Avatar><AvatarFallback>{initials(c.author)}</AvatarFallback></Avatar><span><strong>{c.author}<small>{c.time}</small></strong><p>{c.text}</p>{c.attachment&&<a href={c.attachment.url} target="_blank" rel="noreferrer"><Paperclip/>{c.attachment.name}</a>}</span></article>)}{!task.comments?.length&&<p className="no-comments">هنوز دیدگاهی ثبت نشده است.</p>}</div><footer><Input value={comment} onChange={e=>setComment(e.target.value)} placeholder="دیدگاه یا گزارش انجام کار را بنویسید..."/><label><Paperclip/><input type="file" onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/></label><Button type="button" onClick={submit}><Send/></Button></footer></section></DialogContent></Dialog>
+function TaskDetailsModal({
+  task,
+  open,
+  close,
+  save,
+}: {
+  task?: Task;
+  open: boolean;
+  close: () => void;
+  save: (task: Task) => void;
+}) {
+  const [comment, setComment] = useState("");
+  if (!task) return null;
+  const upload = async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("api/files", { method: "POST", body });
+    if (!response.ok) {
+      toast.error("فایل ارسال نشد");
+      return;
+    }
+    const attachment = (await response.json()) as Attachment;
+    save({
+      ...task,
+      comments: [
+        ...(task.comments || []),
+        {
+          id: newId(),
+          author: "کاربر جاری",
+          text: "فایل پیوست شد",
+          time: `امروز، ${now()}`,
+          attachment,
+        },
+      ],
+    });
+  };
+  const submit = () => {
+    if (!comment.trim()) return;
+    save({
+      ...task,
+      comments: [
+        ...(task.comments || []),
+        {
+          id: newId(),
+          author: "کاربر جاری",
+          text: comment.trim(),
+          time: `امروز، ${now()}`,
+        },
+      ],
+    });
+    setComment("");
+  };
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && close()}>
+      <DialogContent className="task-detail-dialog">
+        <DialogHeader>
+          <DialogTitle>{task.title}</DialogTitle>
+          <DialogDescription>
+            {task.project} · {task.assignee}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="task-detail-summary">
+          <span>
+            <small>وضعیت</small>
+            <strong>{defaultBoardLabels[task.status]}</strong>
+          </span>
+          <span>
+            <small>شروع</small>
+            <strong>{task.startDate || "—"}</strong>
+          </span>
+          <span>
+            <small>مهلت پایان</small>
+            <strong>{task.endDate || task.due || "—"}</strong>
+          </span>
+          <span>
+            <small>برچسب</small>
+            <strong>{task.label}</strong>
+          </span>
+        </div>
+        <section className="task-description-box">
+          <h3>توضیحات وظیفه</h3>
+          <p>{task.description || "برای این وظیفه توضیحی ثبت نشده است."}</p>
+        </section>
+        {task.subtasks?.length ? (
+          <section className="detail-subtasks">
+            <h3>مراحل انجام</h3>
+            {task.subtasks.map((s) => (
+              <div className={s.done ? "done" : ""} key={s.id}>
+                <span>{s.done && <Check />}</span>
+                {s.title}
+              </div>
+            ))}
+          </section>
+        ) : null}
+        <section className="task-comments">
+          <h3>دیدگاه‌ها و فعالیت‌ها</h3>
+          <div>
+            {(task.comments || []).map((c) => (
+              <article key={c.id}>
+                <Avatar>
+                  <AvatarFallback>{initials(c.author)}</AvatarFallback>
+                </Avatar>
+                <span>
+                  <strong>
+                    {c.author}
+                    <small>{c.time}</small>
+                  </strong>
+                  <p>{c.text}</p>
+                  {c.attachment && (
+                    <a href={c.attachment.url} target="_blank" rel="noreferrer">
+                      <Paperclip />
+                      {c.attachment.name}
+                    </a>
+                  )}
+                </span>
+              </article>
+            ))}
+            {!task.comments?.length && (
+              <p className="no-comments">هنوز دیدگاهی ثبت نشده است.</p>
+            )}
+          </div>
+          <footer>
+            <Input
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="دیدگاه یا گزارش انجام کار را بنویسید..."
+            />
+            <label>
+              <Paperclip />
+              <input
+                type="file"
+                onChange={(e) =>
+                  e.target.files?.[0] && upload(e.target.files[0])
+                }
+              />
+            </label>
+            <Button type="button" onClick={submit}>
+              <Send />
+            </Button>
+          </footer>
+        </section>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function DashboardV2({
@@ -6254,12 +5538,15 @@ function DashboardV2({
   totals: { income: number; expense: number; receivable: number };
   setView: (v: View) => void;
   onToggle: (id: number) => void;
-  onPersonalToggle:(id:number)=>void;
-  canSeeFinance:boolean;
+  onPersonalToggle: (id: number) => void;
+  canSeeFinance: boolean;
 }) {
   const openTasks = data.tasks
       .filter((t) => !["done", "cancelled"].includes(t.status))
-      .slice(0, 4),personalToday=data.personalTasks.filter(t=>t.status==="active"&&t.date===todayJalali()).slice(0,3),
+      .slice(0, 4),
+    personalToday = data.personalTasks
+      .filter((t) => t.status === "active" && t.date === todayJalali())
+      .slice(0, 3),
     balance = totals.income - totals.expense,
     max = Math.max(totals.income, totals.expense, totals.receivable, 1);
   return (
@@ -6315,16 +5602,18 @@ function DashboardV2({
             <em>فرصت فروش فعال</em>
           </span>
         </article>
-        {canSeeFinance && <article className="kpi-v2 coral">
-          <div className="kpi-icon">
-            <CircleDollarSign />
-          </div>
-          <span>
-            <small>مطالبات</small>
-            <strong>{money(totals.receivable)}</strong>
-            <em>ثبت‌شده این ماه</em>
-          </span>
-        </article>}
+        {canSeeFinance && (
+          <article className="kpi-v2 coral">
+            <div className="kpi-icon">
+              <CircleDollarSign />
+            </div>
+            <span>
+              <small>مطالبات</small>
+              <strong>{money(totals.receivable)}</strong>
+              <em>ثبت‌شده این ماه</em>
+            </span>
+          </article>
+        )}
       </section>
       <section className="dashboard-main-grid">
         <div className="panel today-panel">
@@ -6355,59 +5644,114 @@ function DashboardV2({
                 <time>{t.due}</time>
               </article>
             ))}
-            {personalToday.map(t=><article key={`personal-${t.id}`} className="today-personal"><button className="today-check" onClick={()=>onPersonalToggle(t.id)} aria-label="تکمیل تسک شخصی"/><div><strong>{t.title}</strong><small><LockKeyhole/> تسک شخصی · {t.repeat}</small></div><Badge variant="outline">شخصی</Badge><time>{t.date}</time></article>)}
-            {!openTasks.length&&!personalToday.length && (
+            {personalToday.map((t) => (
+              <article key={`personal-${t.id}`} className="today-personal">
+                <button
+                  className="today-check"
+                  onClick={() => onPersonalToggle(t.id)}
+                  aria-label="تکمیل تسک شخصی"
+                />
+                <div>
+                  <strong>{t.title}</strong>
+                  <small>
+                    <LockKeyhole /> تسک شخصی · {t.repeat}
+                  </small>
+                </div>
+                <Badge variant="outline">شخصی</Badge>
+                <time>{t.date}</time>
+              </article>
+            ))}
+            {!openTasks.length && !personalToday.length && (
               <div className="empty-state">
                 کار بازی برای امروز باقی نمانده است.
               </div>
             )}
           </div>
         </div>
-        {canSeeFinance && <div className="panel finance-dashboard-card">
-          <header>
-            <div>
-              <h2>خلاصه مالی</h2>
-              <span>{monthTitle(currentJalaliMonth())}</span>
-            </div>
-            <button onClick={() => setView("finance")}>
-              گزارش کامل <ArrowLeft />
-            </button>
-          </header>
-          <div className="balance-box">
-            <span>مانده خالص</span>
-            <strong>{money(balance)}</strong>
-            <small className={balance >= 0 ? "positive" : "negative"}>
-              {balance >= 0 ? <TrendingUp /> : <TrendingDown />} وضعیت نقدینگی
-              این ماه
-            </small>
-          </div>
-          <div className="finance-bars">
-            {[
-              ["درآمد", totals.income, "income"],
-              ["هزینه", totals.expense, "expense"],
-              ["مطالبات", totals.receivable, "receivable"],
-            ].map(([label, value, kind]) => (
-              <div key={String(label)}>
-                <span>
-                  <b>{label}</b>
-                  <em>{money(value as number)}</em>
-                </span>
-                <i>
-                  <u
-                    className={String(kind)}
-                    style={{
-                      width: `${Math.max(8, ((value as number) / max) * 100)}%`,
-                    }}
-                  />
-                </i>
+        {canSeeFinance && (
+          <div className="panel finance-dashboard-card">
+            <header>
+              <div>
+                <h2>خلاصه مالی</h2>
+                <span>{monthTitle(currentJalaliMonth())}</span>
               </div>
-            ))}
+              <button onClick={() => setView("finance")}>
+                گزارش کامل <ArrowLeft />
+              </button>
+            </header>
+            <div className="balance-box">
+              <span>مانده خالص</span>
+              <strong>{money(balance)}</strong>
+              <small className={balance >= 0 ? "positive" : "negative"}>
+                {balance >= 0 ? <TrendingUp /> : <TrendingDown />} وضعیت نقدینگی
+                این ماه
+              </small>
+            </div>
+            <div className="finance-bars">
+              {[
+                ["درآمد", totals.income, "income"],
+                ["هزینه", totals.expense, "expense"],
+                ["مطالبات", totals.receivable, "receivable"],
+              ].map(([label, value, kind]) => (
+                <div key={String(label)}>
+                  <span>
+                    <b>{label}</b>
+                    <em>{money(value as number)}</em>
+                  </span>
+                  <i>
+                    <u
+                      className={String(kind)}
+                      style={{
+                        width: `${Math.max(8, ((value as number) / max) * 100)}%`,
+                      }}
+                    />
+                  </i>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>}
+        )}
       </section>
       <section className="dashboard-activity-grid">
-        <div className="panel dashboard-mini-list"><header><Activity/><div><h2>آخرین فعالیت‌ها</h2><span>خلاصه فعالیت اعضای تیم</span></div></header>{data.logs.slice(0,5).map((log)=><div key={log.id}><strong>{log.member}</strong><span>{log.action}</span><time>{log.time}</time></div>)}{!data.logs.length&&<p>هنوز فعالیتی ثبت نشده است.</p>}</div>
-        <div className="panel dashboard-mini-list"><header><Clock3/><div><h2>ورود و خروج امروز</h2><span>آخرین ثبت‌های حضور تیم</span></div></header>{data.attendance.slice(0,5).map((entry)=><div key={entry.id}><strong>{data.members.find((member)=>member.id===entry.memberId)?.name||"عضو تیم"}</strong><span>ورود {entry.checkIn} · خروج {entry.checkOut||"ثبت نشده"}</span><time>{entry.date}</time></div>)}{!data.attendance.length&&<p>هنوز ورود یا خروجی ثبت نشده است.</p>}</div>
+        <div className="panel dashboard-mini-list">
+          <header>
+            <Activity />
+            <div>
+              <h2>آخرین فعالیت‌ها</h2>
+              <span>خلاصه فعالیت اعضای تیم</span>
+            </div>
+          </header>
+          {data.logs.slice(0, 5).map((log) => (
+            <div key={log.id}>
+              <strong>{log.member}</strong>
+              <span>{log.action}</span>
+              <time>{log.time}</time>
+            </div>
+          ))}
+          {!data.logs.length && <p>هنوز فعالیتی ثبت نشده است.</p>}
+        </div>
+        <div className="panel dashboard-mini-list">
+          <header>
+            <Clock3 />
+            <div>
+              <h2>ورود و خروج امروز</h2>
+              <span>آخرین ثبت‌های حضور تیم</span>
+            </div>
+          </header>
+          {data.attendance.slice(0, 5).map((entry) => (
+            <div key={entry.id}>
+              <strong>
+                {data.members.find((member) => member.id === entry.memberId)
+                  ?.name || "عضو تیم"}
+              </strong>
+              <span>
+                ورود {entry.checkIn} · خروج {entry.checkOut || "ثبت نشده"}
+              </span>
+              <time>{entry.date}</time>
+            </div>
+          ))}
+          {!data.attendance.length && <p>هنوز ورود یا خروجی ثبت نشده است.</p>}
+        </div>
       </section>
     </>
   );
@@ -6533,7 +5877,10 @@ function SettingsV2({
       clients: [],
       leads: [],
     });
-  useEffect(() => setDraft(labels), [labels]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh the settings draft after a server reload
+    setDraft(labels);
+  }, [labels]);
   const add = (section: keyof LabelSettings) => {
     const value = (inputs[section][0] || "").trim();
     if (!value || draft[section].includes(value)) return;
@@ -6654,10 +6001,15 @@ function SettingsV2({
                     <input
                       aria-label={`ویرایش برچسب ${tag}`}
                       value={tag}
-                      onChange={(e) => setDraft((current) => ({
-                        ...current,
-                        [item.key]: current[item.key].map((value, currentIndex) => currentIndex === index ? e.target.value : value),
-                      }))}
+                      onChange={(e) =>
+                        setDraft((current) => ({
+                          ...current,
+                          [item.key]: current[item.key].map(
+                            (value, currentIndex) =>
+                              currentIndex === index ? e.target.value : value,
+                          ),
+                        }))
+                      }
                     />
                     <button
                       aria-label={`حذف برچسب ${tag}`}
@@ -6704,108 +6056,6 @@ function SettingsV2({
     </>
   );
 }
-
-function TaskDialogV2({
-  open,
-  close,
-  task,
-  projects,
-  members,
-  save,
-  defaultProject,
-  labels,
-}: {
-  open: boolean;
-  close: () => void;
-  task?: Task;
-  projects: Project[];
-  members: Member[];
-  save: (t: Task) => void;
-  defaultProject?: string;
-  labels: string[];
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title={task ? "ویرایش وظیفه" : "افزودن وظیفه"}
-      description="وظیفه را به پروژه و مسئول انجام محول کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e),
-          status = d.status as TaskStatus;
-        save({
-          id: task?.id || Date.now(),
-          title: d.title,
-          description: d.description,
-          project: d.project,
-          assignee: d.assignee,
-          due: d.due,
-          label: d.label,
-          status,
-          progress: status === "done" ? 100 : Number(d.progress || 0),
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field
-          label="عنوان وظیفه"
-          name="title"
-          defaultValue={task?.title}
-          wide
-          required
-        />
-        <Field label="پروژه" name="project">
-          <select name="project" defaultValue={task?.project || defaultProject}>
-            {projects.map((p) => (
-              <option key={p.id}>{p.title}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="مسئول انجام" name="assignee">
-          <select name="assignee" defaultValue={task?.assignee}>
-            {members
-              .filter((m) => m.status === "فعال")
-              .map((m) => (
-                <option key={m.id}>{m.name}</option>
-              ))}
-          </select>
-        </Field>
-        <Field
-          label="مهلت انجام"
-          name="due"
-          defaultValue={task?.due || "۲۵ شهریور"}
-        />
-        <Field label="برچسب" name="label">
-          <select name="label" defaultValue={task?.label || labels[0]}>
-            {labels.map((x) => (
-              <option key={x}>{x}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="وضعیت" name="status">
-          <select name="status" defaultValue={task?.status || "backlog"}>
-            {columns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field
-          label="درصد پیشرفت"
-          name="progress"
-          type="number"
-          defaultValue={String(task?.progress || 0)}
-        />
-        <label className="wide">
-          توضیحات
-          <Textarea name="description" defaultValue={task?.description} />
-        </label>
-      </div>
-    </Modal>
-  );
-}
 function ClientDialogV2({
   open,
   close,
@@ -6824,7 +6074,11 @@ function ClientDialogV2({
       open={open}
       close={close}
       title={client ? "ویرایش مشتری" : "ثبت مشتری جدید"}
-      description={client ? "اطلاعات و برچسب خدمت مشتری را تغییر دهید." : "اطلاعات تماس و خدمت مشتری را وارد کنید."}
+      description={
+        client
+          ? "اطلاعات و برچسب خدمت مشتری را تغییر دهید."
+          : "اطلاعات تماس و خدمت مشتری را وارد کنید."
+      }
       onSubmit={(e) => {
         e.preventDefault();
         const d = fd(e);
@@ -6840,11 +6094,36 @@ function ClientDialogV2({
       }}
     >
       <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" defaultValue={client?.name} required />
-        <Field label="نام شرکت" name="company" defaultValue={client?.company} required />
-        <Field label="شماره تلفن" name="phone" defaultValue={client?.phone} required />
-        <Field label="ایمیل" name="email" type="email" defaultValue={client?.email} />
-        <Field label="آدرس سایت" name="website" type="url" defaultValue={client?.website} />
+        <Field
+          label="نام و نام خانوادگی"
+          name="name"
+          defaultValue={client?.name}
+          required
+        />
+        <Field
+          label="نام شرکت"
+          name="company"
+          defaultValue={client?.company}
+          required
+        />
+        <Field
+          label="شماره تلفن"
+          name="phone"
+          defaultValue={client?.phone}
+          required
+        />
+        <Field
+          label="ایمیل"
+          name="email"
+          type="email"
+          defaultValue={client?.email}
+        />
+        <Field
+          label="آدرس سایت"
+          name="website"
+          type="url"
+          defaultValue={client?.website}
+        />
         <Field label="برچسب خدمت" name="service">
           <select name="service" defaultValue={client?.service}>
             {labels.map((x) => (
@@ -6877,7 +6156,7 @@ function LeadDialogV2({
         e.preventDefault();
         const d = fd(e);
         save({
-          id: Date.now(),
+          id: newId(),
           name: d.name,
           company: d.company,
           phone: d.phone,
@@ -6924,7 +6203,10 @@ function MemberDialogV2({
 }) {
   const [avatar, setAvatar] = useState<Attachment | null>(null),
     [uploading, setUploading] = useState(false);
-  useEffect(()=>setAvatar(member?.avatar||null),[member,open]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh the upload draft when the dialog target changes
+    setAvatar(member?.avatar || null);
+  }, [member, open]);
   const upload = async (file: File) => {
     setUploading(true);
     const body = new FormData();
@@ -6940,22 +6222,35 @@ function MemberDialogV2({
     <Modal
       open={open}
       close={close}
-      title={member?"ویرایش اطلاعات همکار":"ثبت همکار جدید"}
-      description={member?"نام، ایمیل ورود، نقش، وضعیت و تصویر پروفایل را ویرایش کنید.":"اطلاعات همکار، نقش و تصویر پروفایل را تعریف کنید."}
-      submit={member?"ذخیره تغییرات":"ثبت همکار"}
-      onSubmit={async(e) => {
+      title={member ? "ویرایش اطلاعات همکار" : "ثبت همکار جدید"}
+      description={
+        member
+          ? "نام، ایمیل ورود، نقش، وضعیت و تصویر پروفایل را ویرایش کنید."
+          : "اطلاعات همکار، نقش و تصویر پروفایل را تعریف کنید."
+      }
+      submit={member ? "ذخیره تغییرات" : "ثبت همکار"}
+      onSubmit={async (e) => {
         e.preventDefault();
         const d = fd(e);
-        const saved=await save({
-          id: member?.id||Date.now(),
-          name: d.name,
-          email: d.email,
-          role: d.role,
-          status: d.status as Member["status"],
-          permissions: member?.permissions||["مشاهده پروژه‌ها", "مشاهده تسک‌ها", "افزودن تسک", "تغییر وضعیت تسک", "ارسال پیام"],
-          avatar: avatar || undefined,
-        },d.password);
-        if(saved)setAvatar(null);
+        const saved = await save(
+          {
+            id: member?.id || Date.now(),
+            name: d.name,
+            email: d.email,
+            role: d.role,
+            status: d.status as Member["status"],
+            permissions: member?.permissions || [
+              "مشاهده پروژه‌ها",
+              "مشاهده تسک‌ها",
+              "افزودن تسک",
+              "تغییر وضعیت تسک",
+              "ارسال پیام",
+            ],
+            avatar: avatar || undefined,
+          },
+          d.password,
+        );
+        if (saved) setAvatar(null);
       }}
     >
       <label className="member-avatar-upload">
@@ -6981,9 +6276,25 @@ function MemberDialogV2({
         />
       </label>
       <div className="form-grid">
-        <Field label="نام و نام خانوادگی" name="name" defaultValue={member?.name} required />
-        <Field label="ایمیل ورود" name="email" type="email" defaultValue={member?.email} required />
-        <Field label={member?"رمز جدید (اختیاری)":"رمز عبور اولیه"} name="password" type="password" required={!member} />
+        <Field
+          label="نام و نام خانوادگی"
+          name="name"
+          defaultValue={member?.name}
+          required
+        />
+        <Field
+          label="ایمیل ورود"
+          name="email"
+          type="email"
+          defaultValue={member?.email}
+          required
+        />
+        <Field
+          label={member ? "رمز جدید (اختیاری)" : "رمز عبور اولیه"}
+          name="password"
+          type="password"
+          required={!member}
+        />
         <Field label="نقش سازمانی" name="role">
           <select name="role" defaultValue={member?.role}>
             <option>کارشناس سئو</option>
@@ -6994,7 +6305,10 @@ function MemberDialogV2({
           </select>
         </Field>
         <Field label="وضعیت حساب" name="status">
-          <select name="status" defaultValue={member?.status||"فعال"}><option>فعال</option><option>غیرفعال</option></select>
+          <select name="status" defaultValue={member?.status || "فعال"}>
+            <option>فعال</option>
+            <option>غیرفعال</option>
+          </select>
         </Field>
       </div>
     </Modal>
@@ -7004,177 +6318,34 @@ function TeamV2(props: Parameters<typeof TeamPro>[0]) {
   return <TeamPro {...props} />;
 }
 
-function PersonalTasksPanel({
-  open,
-  close,
-  tasks,
-  save,
-}: {
-  open: boolean;
-  close: () => void;
-  tasks: PersonalTask[];
-  save: (tasks: PersonalTask[]) => void;
-}) {
-  const [title, setTitle] = useState(""),
-    [date, setDate] = useState(todayJalali()),
-    [repeat, setRepeat] = useState<PersonalTask["repeat"]>("بدون تکرار");
-  const active = tasks.filter((t) => t.status === "active"),
-    archived = tasks.filter((t) => t.status !== "active");
-  const add = () => {
-    if (!title.trim()) return;
-    save([
-      { id: Date.now(), title: title.trim(), date, repeat, status: "active" },
-      ...tasks,
-    ]);
-    setTitle("");
-    toast.success("تسک شخصی ثبت شد");
-  };
-  const status = (id: number, value: PersonalTask["status"]) =>
-    save(tasks.map((t) => (t.id === id ? { ...t, status: value } : t)));
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && close()}>
-      <DialogContent className="personal-tasks-dialog" dir="rtl">
-        <DialogHeader>
-          <DialogTitle>تسک‌های شخصی من</DialogTitle>
-          <DialogDescription>
-            برنامه‌های روزانه و یادآوری‌های خصوصی شما
-          </DialogDescription>
-        </DialogHeader>
-        <div className="personal-add-box">
-          <Input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && add()}
-            placeholder="مثلاً تماس با مشتری یا بررسی گزارش..."
-          />
-          <div>
-            <label>
-              <CalendarDays />
-              <input
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                inputMode="numeric"
-                placeholder="۱۴۰۵/۰۶/۱۷"
-              />
-            </label>
-            <select
-              value={repeat}
-              onChange={(e) =>
-                setRepeat(e.target.value as PersonalTask["repeat"])
-              }
-            >
-              <option>بدون تکرار</option>
-              <option>روزانه</option>
-              <option>هفتگی</option>
-              <option>ماهانه</option>
-            </select>
-            <Button onClick={add}>
-              <Plus /> افزودن
-            </Button>
-          </div>
-        </div>
-        <Tabs defaultValue="active" className="personal-tabs">
-          <TabsList variant="line">
-            <TabsTrigger value="active">
-              برنامه‌ها <Badge>{active.length}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="archive">
-              آرشیو <Badge variant="outline">{archived.length}</Badge>
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="active">
-            <div className="personal-task-list">
-              {active.map((t) => (
-                <article key={t.id}>
-                  <button
-                    className="personal-check"
-                    onClick={() => status(t.id, "done")}
-                  />
-                  <span>
-                    <strong>{t.title}</strong>
-                    <small>
-                      {t.date} · {t.repeat}
-                    </small>
-                  </span>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="icon-button">
-                        <MoreVertical />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
-                      <DropdownMenuItem onClick={() => status(t.id, "done")}>
-                        <Check /> تکمیل شد
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="danger-item"
-                        onClick={() => status(t.id, "cancelled")}
-                      >
-                        <X /> لغو شد
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </article>
-              ))}
-              {!active.length && (
-                <div className="empty-state">برنامه فعالی باقی نمانده است.</div>
-              )}
-            </div>
-          </TabsContent>
-          <TabsContent value="archive">
-            <div className="personal-task-list archive">
-              {archived.map((t) => (
-                <article key={t.id}>
-                  <span className={`archive-state ${t.status}`}>
-                    {t.status === "done" ? <Check /> : <X />}
-                  </span>
-                  <span>
-                    <strong>{t.title}</strong>
-                    <small>
-                      {t.status === "done" ? "تکمیل‌شده" : "لغوشده"} · {t.date}
-                    </small>
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => status(t.id, "active")}
-                  >
-                    بازگردانی
-                  </Button>
-                </article>
-              ))}
-              {!archived.length && (
-                <div className="empty-state">آرشیو هنوز خالی است.</div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
+function downloadFinancialRows(rows: Transaction[], month: string) {
+  if (!rows.length) {
+    toast.error("سندی برای خروجی این ماه وجود ندارد");
+    return;
+  }
+  const header = "عنوان,پروژه,نوع,تاریخ,مبلغ,وضعیت";
+  const quote = (value: string | number) =>
+    `"${String(value).replaceAll('"', '""')}"`;
+  const csv =
+    "\uFEFF" +
+    [
+      header,
+      ...rows.map((row) =>
+        [row.title, row.project, row.type, row.date, row.amount, row.status]
+          .map(quote)
+          .join(","),
+      ),
+    ].join("\n");
+  const url = URL.createObjectURL(
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
   );
-}
-
-function downloadFinancialRows(rows:Transaction[],month:string){
-  if(!rows.length){toast.error("سندی برای خروجی این ماه وجود ندارد");return}
-  const header="عنوان,پروژه,نوع,تاریخ,مبلغ,وضعیت";
-  const quote=(value:string|number)=>`"${String(value).replaceAll('"','""')}"`;
-  const csv="\uFEFF"+[header,...rows.map((row)=>[row.title,row.project,row.type,row.date,row.amount,row.status].map(quote).join(","))].join("\n");
-  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
-  const link=document.createElement("a");link.href=url;link.download=`financial-${month}.csv`;link.click();URL.revokeObjectURL(url);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `financial-${month}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
   toast.success("گزارش مالی دانلود شد");
 }
-
-const financialTypeLabels: Record<Transaction["type"], string> = {
-  income: "درآمد",
-  expense: "هزینه",
-  receivable: "طلب",
-  payable: "بدهی",
-};
-const financialStatusLabels: Record<Transaction["status"], string> = {
-  paid: "پرداخت‌شده",
-  pending: "در انتظار",
-  overdue: "سررسید گذشته",
-};
 const normalizeExcelText = (value: unknown) =>
   String(value ?? "")
     .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
@@ -7232,45 +6403,78 @@ const readFinancialExcel = async (file: File) => {
     raw: false,
   });
   const value = (row: Record<string, unknown>, ...keys: string[]) =>
-    keys.map((key) => row[key]).find((item) => item !== undefined && item !== "");
+    keys
+      .map((key) => row[key])
+      .find((item) => item !== undefined && item !== "");
   const typeMap: Record<string, Transaction["type"]> = {
-    "درآمد": "income", income: "income",
-    "هزینه": "expense", expense: "expense",
-    "طلب": "receivable", "مطالبه": "receivable", receivable: "receivable",
-    "بدهی": "payable", payable: "payable",
+    درآمد: "income",
+    income: "income",
+    هزینه: "expense",
+    expense: "expense",
+    طلب: "receivable",
+    مطالبه: "receivable",
+    receivable: "receivable",
+    بدهی: "payable",
+    payable: "payable",
   };
   const statusMap: Record<string, Transaction["status"]> = {
-    "پرداخت‌شده": "paid", "پرداخت شده": "paid", paid: "paid",
-    "در انتظار": "pending", pending: "pending",
-    "سررسید گذشته": "overdue", overdue: "overdue",
+    پرداخت‌شده: "paid",
+    "پرداخت شده": "paid",
+    paid: "paid",
+    "در انتظار": "pending",
+    pending: "pending",
+    "سررسید گذشته": "overdue",
+    overdue: "overdue",
   };
   const errors: string[] = [];
   const imported: Transaction[] = [];
   records.forEach((record, index) => {
-    const title = normalizeExcelText(value(record, "شرح سند", "عنوان", "title"));
-    const project = normalizeExcelText(value(record, "پروژه / دسته", "پروژه", "دسته", "project")) || "هزینه عمومی";
-    const typeText = normalizeExcelText(value(record, "نوع سند", "نوع", "type")).toLowerCase();
-    const statusText = normalizeExcelText(value(record, "وضعیت", "status")).toLowerCase();
-    const amountText = normalizeExcelText(value(record, "مبلغ (تومان)", "مبلغ", "amount"))
+    const title = normalizeExcelText(
+      value(record, "شرح سند", "عنوان", "title"),
+    );
+    const project =
+      normalizeExcelText(
+        value(record, "پروژه / دسته", "پروژه", "دسته", "project"),
+      ) || "هزینه عمومی";
+    const typeText = normalizeExcelText(
+      value(record, "نوع سند", "نوع", "type"),
+    ).toLowerCase();
+    const statusText = normalizeExcelText(
+      value(record, "وضعیت", "status"),
+    ).toLowerCase();
+    const amountText = normalizeExcelText(
+      value(record, "مبلغ (تومان)", "مبلغ", "amount"),
+    )
       .replace(/[٬،,\s]/g, "")
       .replace(/تومان/g, "");
     const amount = Number(amountText);
-    const date = normalizeExcelText(value(record, "تاریخ شمسی", "تاریخ", "date"))
-      .replaceAll("-", "/");
+    const date = normalizeExcelText(
+      value(record, "تاریخ شمسی", "تاریخ", "date"),
+    ).replaceAll("-", "/");
     const type = typeMap[typeText];
     const status = statusMap[statusText] || "pending";
     const dateParts = date.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
     const validDate = Boolean(
       dateParts &&
-      Number(dateParts[2]) >= 1 && Number(dateParts[2]) <= 12 &&
-      Number(dateParts[3]) >= 1 && Number(dateParts[3]) <= 31,
+      Number(dateParts[2]) >= 1 &&
+      Number(dateParts[2]) <= 12 &&
+      Number(dateParts[3]) >= 1 &&
+      Number(dateParts[3]) <= 31,
     );
-    if (!title || !type || !Number.isFinite(amount) || amount <= 0 || !validDate) {
-      errors.push(`ردیف ${faDigits(String(index + 2))}: شرح، نوع، مبلغ یا تاریخ معتبر نیست.`);
+    if (
+      !title ||
+      !type ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !validDate
+    ) {
+      errors.push(
+        `ردیف ${faDigits(String(index + 2))}: شرح، نوع، مبلغ یا تاریخ معتبر نیست.`,
+      );
       return;
     }
     imported.push({
-      id: Date.now() + index,
+      id: newId() + index,
       title,
       project,
       type,
@@ -7369,10 +6573,15 @@ function FinanceV2({
               setImporting(true);
               try {
                 const imported = await readFinancialExcel(file);
-                if (!imported.length) throw new Error("ردیف معتبری در فایل پیدا نشد.");
+                if (!imported.length)
+                  throw new Error("ردیف معتبری در فایل پیدا نشد.");
                 onImport(imported);
               } catch (reason) {
-                toast.error(reason instanceof Error ? reason.message : "خواندن فایل اکسل انجام نشد.");
+                toast.error(
+                  reason instanceof Error
+                    ? reason.message
+                    : "خواندن فایل اکسل انجام نشد.",
+                );
               } finally {
                 setImporting(false);
                 event.target.value = "";
@@ -7380,7 +6589,10 @@ function FinanceV2({
             }}
           />
         </label>
-        <Button variant="outline" onClick={()=>downloadFinancialRows(filtered,month)}>
+        <Button
+          variant="outline"
+          onClick={() => downloadFinancialRows(filtered, month)}
+        >
           <FileText /> خروجی گزارش
         </Button>
         <Button onClick={onAdd}>
@@ -7481,7 +6693,9 @@ function FinanceV2({
                 ? "درآمد"
                 : t.type === "expense"
                   ? "هزینه"
-                  : t.type === "payable" ? "بدهی" : "طلب"}
+                  : t.type === "payable"
+                    ? "بدهی"
+                    : "طلب"}
             </Badge>
             <time>{t.date}</time>
             <strong className={`finance-amount ${t.type}`}>
@@ -7527,132 +6741,6 @@ function FinanceV2({
   );
 }
 
-function TaskDialogV3({
-  open,
-  close,
-  task,
-  projects,
-  members,
-  save,
-  defaultProject,
-  labels,
-}: {
-  open: boolean;
-  close: () => void;
-  task?: Task;
-  projects: Project[];
-  members: Member[];
-  save: (t: Task) => void;
-  defaultProject?: string;
-  labels: string[];
-}) {
-  return (
-    <Modal
-      open={open}
-      close={close}
-      title={task ? "ویرایش وظیفه" : "افزودن وظیفه"}
-      description="بازه زمانی، پروژه و مسئول انجام را مشخص کنید."
-      onSubmit={(e) => {
-        e.preventDefault();
-        const d = fd(e),
-          status = d.status as TaskStatus,
-          endDate = d.endDate || task?.endDate || "";
-        save({
-          id: task?.id || Date.now(),
-          title: d.title,
-          description: d.description,
-          project: d.project,
-          assignee: d.assignee,
-          startDate: d.startDate,
-          endDate,
-          due: endDate || task?.due || "",
-          label: d.label,
-          status,
-          progress: status === "done" ? 100 : Number(d.progress || 0),
-        });
-      }}
-    >
-      <div className="form-grid">
-        <Field
-          label="عنوان وظیفه"
-          name="title"
-          defaultValue={task?.title}
-          wide
-          required
-        />
-        <Field label="پروژه" name="project">
-          <select name="project" defaultValue={task?.project || defaultProject}>
-            {projects.map((p) => (
-              <option key={p.id}>{p.title}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="مسئول انجام" name="assignee">
-          <select name="assignee" defaultValue={task?.assignee}>
-            {members
-              .filter((m) => m.status === "فعال")
-              .map((m) => (
-                <option key={m.id}>{m.name}</option>
-              ))}
-          </select>
-        </Field>
-        <label>
-          تاریخ شروع شمسی
-          <div className="persian-date-input">
-            <CalendarDays />
-            <input
-              name="startDate"
-              defaultValue={task?.startDate || todayJalali()}
-              inputMode="numeric"
-              placeholder="۱۴۰۵/۰۶/۱۷"
-              required
-            />
-          </div>
-        </label>
-        <label>
-          مهلت پایان شمسی
-          <div className="persian-date-input">
-            <CalendarDays />
-            <input
-              name="endDate"
-              defaultValue={task?.endDate || task?.due || todayJalali()}
-              inputMode="numeric"
-              placeholder="۱۴۰۵/۰۶/۲۵"
-              required
-            />
-          </div>
-        </label>
-        <Field label="برچسب" name="label">
-          <select name="label" defaultValue={task?.label || labels[0]}>
-            {labels.map((x) => (
-              <option key={x}>{x}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="وضعیت" name="status">
-          <select name="status" defaultValue={task?.status || "backlog"}>
-            {columns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.title}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field
-          label="درصد پیشرفت"
-          name="progress"
-          type="number"
-          defaultValue={String(task?.progress || 0)}
-        />
-        <label className="wide">
-          توضیحات
-          <Textarea name="description" defaultValue={task?.description} />
-        </label>
-      </div>
-    </Modal>
-  );
-}
-
 function TaskDialogV4({
   open,
   close,
@@ -7676,6 +6764,7 @@ function TaskDialogV4({
     [subtasks, setSubtasks] = useState<Subtask[]>([]),
     [subtaskTitle, setSubtaskTitle] = useState("");
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh the editable dialog draft when its record changes
     setMulti(Boolean(task?.subtasks?.length));
     setSubtasks(task?.subtasks || []);
   }, [task, open]);
@@ -7683,7 +6772,7 @@ function TaskDialogV4({
     if (!subtaskTitle.trim()) return;
     setSubtasks((v) => [
       ...v,
-      { id: Date.now(), title: subtaskTitle.trim(), done: false },
+      { id: newId(), title: subtaskTitle.trim(), done: false },
     ]);
     setSubtaskTitle("");
   };
@@ -7736,9 +6825,57 @@ function TaskDialogV4({
       </div>
       {multi && (
         <section className="subtask-builder subtask-builder-top">
-          <div><h3>زیرتسک‌ها</h3><Badge variant="outline">{faDigits(String(subtasks.length))} مورد</Badge></div>
-          <div className="subtask-add"><Input value={subtaskTitle} onChange={(e)=>setSubtaskTitle(e.target.value)} onKeyDown={(e)=>{if(e.key==="Enter"){e.preventDefault();addSubtask()}}} placeholder="زیرتسک بعدی را همین‌جا بنویسید..."/><Button type="button" variant="outline" onClick={addSubtask}><Plus/> افزودن</Button></div>
-          <div className="subtask-builder-list">{subtasks.map((s,index)=><article key={s.id}><GripVertical/><span>{faDigits(String(index+1))}</span><Input value={s.title} onChange={(e)=>setSubtasks(v=>v.map(x=>x.id===s.id?{...x,title:e.target.value}:x))}/><button type="button" onClick={()=>setSubtasks(v=>v.filter(x=>x.id!==s.id))}><Trash2/></button></article>)}{!subtasks.length&&<p>زیرتسک اول را وارد کنید؛ مثلاً «تحقیق کلمات کلیدی».</p>}</div>
+          <div>
+            <h3>زیرتسک‌ها</h3>
+            <Badge variant="outline">
+              {faDigits(String(subtasks.length))} مورد
+            </Badge>
+          </div>
+          <div className="subtask-add">
+            <Input
+              value={subtaskTitle}
+              onChange={(e) => setSubtaskTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addSubtask();
+                }
+              }}
+              placeholder="زیرتسک بعدی را همین‌جا بنویسید..."
+            />
+            <Button type="button" variant="outline" onClick={addSubtask}>
+              <Plus /> افزودن
+            </Button>
+          </div>
+          <div className="subtask-builder-list">
+            {subtasks.map((s, index) => (
+              <article key={s.id}>
+                <GripVertical />
+                <span>{faDigits(String(index + 1))}</span>
+                <Input
+                  value={s.title}
+                  onChange={(e) =>
+                    setSubtasks((v) =>
+                      v.map((x) =>
+                        x.id === s.id ? { ...x, title: e.target.value } : x,
+                      ),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSubtasks((v) => v.filter((x) => x.id !== s.id))
+                  }
+                >
+                  <Trash2 />
+                </button>
+              </article>
+            ))}
+            {!subtasks.length && (
+              <p>زیرتسک اول را وارد کنید؛ مثلاً «تحقیق کلمات کلیدی».</p>
+            )}
+          </div>
         </section>
       )}
       <div className="form-grid">
@@ -7821,8 +6958,8 @@ function TasksTableV3({
 }: {
   tasks: Task[];
   personalTasks: PersonalTask[];
-  onPersonalToggle:(id:number)=>void;
-  onToggleSubtask:(taskId:number,subtaskId:number)=>void;
+  onPersonalToggle: (id: number) => void;
+  onToggleSubtask: (taskId: number, subtaskId: number) => void;
   onAdd: () => void;
   onMove: (id: number, s: TaskStatus) => void;
   onEdit: (id: number) => void;
@@ -7885,7 +7022,49 @@ function TasksTableV3({
           می‌شود
         </div>
       </div>
-      <section className="personal-tasks-inbox panel"><header><div className="personal-inbox-icon"><LockKeyhole/></div><div><h2>تسک‌های شخصی من</h2><span>فقط برای شما · برنامه‌های روزانه و یادآوری‌ها</span></div><Badge>{faDigits(String(personalTasks.filter(t=>t.status==="active").length))} شخصی</Badge></header><div className="personal-inbox-list">{personalTasks.filter(t=>t.status==="active").slice(0,5).map(t=><article key={t.id}><button className="personal-check" onClick={()=>onPersonalToggle(t.id)} aria-label="تکمیل تسک شخصی"/><span><strong>{t.title}</strong><small>{t.repeat} · {t.date}</small></span><Badge variant="outline" className="private-task-badge"><LockKeyhole/> شخصی</Badge></article>)}{!personalTasks.some(t=>t.status==="active")&&<p>تسک شخصی فعالی ندارید.</p>}</div></section>
+      <section className="personal-tasks-inbox panel">
+        <header>
+          <div className="personal-inbox-icon">
+            <LockKeyhole />
+          </div>
+          <div>
+            <h2>تسک‌های شخصی من</h2>
+            <span>فقط برای شما · برنامه‌های روزانه و یادآوری‌ها</span>
+          </div>
+          <Badge>
+            {faDigits(
+              String(personalTasks.filter((t) => t.status === "active").length),
+            )}{" "}
+            شخصی
+          </Badge>
+        </header>
+        <div className="personal-inbox-list">
+          {personalTasks
+            .filter((t) => t.status === "active")
+            .slice(0, 5)
+            .map((t) => (
+              <article key={t.id}>
+                <button
+                  className="personal-check"
+                  onClick={() => onPersonalToggle(t.id)}
+                  aria-label="تکمیل تسک شخصی"
+                />
+                <span>
+                  <strong>{t.title}</strong>
+                  <small>
+                    {t.repeat} · {t.date}
+                  </small>
+                </span>
+                <Badge variant="outline" className="private-task-badge">
+                  <LockKeyhole /> شخصی
+                </Badge>
+              </article>
+            ))}
+          {!personalTasks.some((t) => t.status === "active") && (
+            <p>تسک شخصی فعالی ندارید.</p>
+          )}
+        </div>
+      </section>
       <div className="assignee-task-groups">
         {grouped.map((group) => (
           <section className="panel assignee-task-group" key={group.name}>
@@ -7933,7 +7112,21 @@ function TasksTableV3({
                   <span>
                     <strong>{t.title}</strong>
                     {t.subtasks?.length ? (
-                      <div className="table-subtasks">{t.subtasks.map(s=><button key={s.id} className={s.done?"done":""} onClick={e=>{e.stopPropagation();onToggleSubtask(t.id,s.id)}}><i>{s.done&&<Check/>}</i><em>{s.title}</em></button>)}</div>
+                      <div className="table-subtasks">
+                        {t.subtasks.map((s) => (
+                          <button
+                            key={s.id}
+                            className={s.done ? "done" : ""}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleSubtask(t.id, s.id);
+                            }}
+                          >
+                            <i>{s.done && <Check />}</i>
+                            <em>{s.title}</em>
+                          </button>
+                        ))}
+                      </div>
                     ) : (
                       <small>{t.description || "بدون توضیحات"}</small>
                     )}
@@ -8008,9 +7201,13 @@ function LeaveCenter({
     [tab, setTab] = useState("pending"),
     [month, setMonth] = useState("");
   const member = (id: number) => members.find((m) => m.id === id),
-    months=Array.from(new Set(leaves.map((leave)=>leave.from.slice(0,7)))).sort().reverse(),
-    selectedMonth=month||months[0]||"",
-    monthlyLeaves=selectedMonth?leaves.filter((leave)=>leave.from.startsWith(selectedMonth)):leaves,
+    months = Array.from(new Set(leaves.map((leave) => leave.from.slice(0, 7))))
+      .sort()
+      .reverse(),
+    selectedMonth = month || months[0] || "",
+    monthlyLeaves = selectedMonth
+      ? leaves.filter((leave) => leave.from.startsWith(selectedMonth))
+      : leaves,
     pending = monthlyLeaves.filter((l) => l.status === "در انتظار"),
     approved = monthlyLeaves.filter((l) => l.status === "تأیید شده"),
     rejected = monthlyLeaves.filter((l) => l.status === "رد شده"),
@@ -8026,13 +7223,37 @@ function LeaveCenter({
     <>
       <PageTitle
         title={isAdmin ? "مدیریت مرخصی‌ها" : "مرخصی‌های من"}
-        subtitle={isAdmin ? "ثبت درخواست و تصمیم‌گیری مدیر کل" : "ثبت و پیگیری درخواست‌های مرخصی شما"}
+        subtitle={
+          isAdmin
+            ? "ثبت درخواست و تصمیم‌گیری مدیر کل"
+            : "ثبت و پیگیری درخواست‌های مرخصی شما"
+        }
       >
         <Button onClick={() => setOpen(true)}>
           <CalendarOff /> درخواست مرخصی
         </Button>
       </PageTitle>
-      {months.length>0&&<div className="finance-month-bar"><div><CalendarDays/><span><small>ماه درخواست‌ها</small><strong>{monthTitle(selectedMonth)}</strong></span></div><select value={selectedMonth} onChange={(e)=>setMonth(e.target.value)}>{months.map((value)=><option key={value} value={value}>{monthTitle(value)}</option>)}</select></div>}
+      {months.length > 0 && (
+        <div className="finance-month-bar">
+          <div>
+            <CalendarDays />
+            <span>
+              <small>ماه درخواست‌ها</small>
+              <strong>{monthTitle(selectedMonth)}</strong>
+            </span>
+          </div>
+          <select
+            value={selectedMonth}
+            onChange={(e) => setMonth(e.target.value)}
+          >
+            {months.map((value) => (
+              <option key={value} value={value}>
+                {monthTitle(value)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <section className="leave-kpis">
         <article>
           <span className="pending">
@@ -8154,7 +7375,7 @@ function LeaveCenter({
           e.preventDefault();
           const d = fd(e);
           onSubmit({
-            id: Date.now(),
+            id: newId(),
             memberId: Number(d.memberId),
             from: d.from,
             to: d.to,
@@ -8166,7 +7387,11 @@ function LeaveCenter({
         }}
       >
         <div className="form-grid">
-          <input type="hidden" name="memberId" value={currentMember?.id || ""} />
+          <input
+            type="hidden"
+            name="memberId"
+            value={currentMember?.id || ""}
+          />
           <div className="wide leave-request-owner">
             <span>درخواست‌دهنده</span>
             <strong>{currentMember?.name || "کاربر جاری"}</strong>
@@ -8249,12 +7474,17 @@ function SettingsV3({
       const body = new FormData();
       body.append("file", file);
       const response = await fetch("api/files", { method: "POST", body });
-      const result = await response.json().catch(() => ({})) as Attachment & { error?: string };
-      if (!response.ok || !result.url) throw new Error(result.error || "آپلود عکس انجام نشد.");
+      const result = (await response.json().catch(() => ({}))) as Attachment & {
+        error?: string;
+      };
+      if (!response.ok || !result.url)
+        throw new Error(result.error || "آپلود عکس انجام نشد.");
       onAvatar(result);
       toast.success("عکس پروفایل شما ذخیره شد");
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "آپلود عکس انجام نشد.");
+      toast.error(
+        reason instanceof Error ? reason.message : "آپلود عکس انجام نشد.",
+      );
     } finally {
       setUploading(false);
     }
@@ -8293,17 +7523,47 @@ function SettingsV3({
           />
         </label>
       </section>
-      {isAdmin && <section className="panel own-profile-settings">
-        <div className="own-profile-copy">
-          <span className="setting-icon"><HardDrive /></span>
-          <div><h2>بازیابی اطلاعات CRM</h2><p>آخرین نسخه پُرتر و سالم ذخیره‌شده در بکاپ‌ها را برگردانید.</p></div>
-        </div>
-        <Button variant="outline" disabled={recovering} onClick={async()=>{
-          if(!window.confirm("آخرین نسخه سالم اطلاعات بازیابی شود؟ از وضعیت فعلی هم بکاپ گرفته می‌شود."))return;
-          setRecovering(true);
-          try{await onRecover();toast.success("اطلاعات آخرین نسخه سالم بازیابی شد")}catch(reason){toast.error(reason instanceof Error?reason.message:"بازیابی انجام نشد.")}finally{setRecovering(false)}
-        }}><Archive />{recovering?"در حال بازیابی...":"بازیابی آخرین نسخه سالم"}</Button>
-      </section>}
+      {isAdmin && (
+        <section className="panel own-profile-settings">
+          <div className="own-profile-copy">
+            <span className="setting-icon">
+              <HardDrive />
+            </span>
+            <div>
+              <h2>بازیابی اطلاعات CRM</h2>
+              <p>آخرین نسخه پُرتر و سالم ذخیره‌شده در بکاپ‌ها را برگردانید.</p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            disabled={recovering}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "آخرین نسخه سالم اطلاعات بازیابی شود؟ از وضعیت فعلی هم بکاپ گرفته می‌شود.",
+                )
+              )
+                return;
+              setRecovering(true);
+              try {
+                await onRecover();
+                toast.success("اطلاعات آخرین نسخه سالم بازیابی شد");
+              } catch (reason) {
+                toast.error(
+                  reason instanceof Error
+                    ? reason.message
+                    : "بازیابی انجام نشد.",
+                );
+              } finally {
+                setRecovering(false);
+              }
+            }}
+          >
+            <Archive />
+            {recovering ? "در حال بازیابی..." : "بازیابی آخرین نسخه سالم"}
+          </Button>
+        </section>
+      )}
     </>
   );
 }
@@ -8386,7 +7646,14 @@ function PersonalTasksPanelV2({
   const add = () => {
     if (!title.trim()) return;
     save([
-      { id: Date.now(), title: title.trim(), date, repeat, status: "active", ownerId },
+      {
+        id: newId(),
+        title: title.trim(),
+        date,
+        repeat,
+        status: "active",
+        ownerId,
+      },
       ...tasks,
     ]);
     setTitle("");
